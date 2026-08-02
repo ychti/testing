@@ -19,8 +19,10 @@ export function OperatorAuthPanel() {
   const [status, setStatus] = useState("Checking session...");
   const [loading, setLoading] = useState(false);
 
-  async function refreshSession() {
-    setLoading(true);
+  async function refreshSession(updateLoading = true) {
+    if (updateLoading) {
+      setLoading(true);
+    }
     try {
       const response = await fetch("/api/v1/auth/me", { method: "GET" });
       const data = (await response.json()) as SessionState;
@@ -35,12 +37,39 @@ export function OperatorAuthPanel() {
       setSession({ authenticated: false });
       setStatus("Session check failed.");
     } finally {
-      setLoading(false);
+      if (updateLoading) {
+        setLoading(false);
+      }
     }
   }
 
   useEffect(() => {
-    void refreshSession();
+    let cancelled = false;
+    async function checkSessionOnMount() {
+      try {
+        const response = await fetch("/api/v1/auth/me", { method: "GET" });
+        const data = (await response.json()) as SessionState;
+        if (cancelled) {
+          return;
+        }
+        if (data.authenticated) {
+          setSession(data);
+          setStatus(`Authenticated as ${data.email}`);
+        } else {
+          setSession({ authenticated: false });
+          setStatus("Not authenticated. Use operator login.");
+        }
+      } catch {
+        if (!cancelled) {
+          setSession({ authenticated: false });
+          setStatus("Session check failed.");
+        }
+      }
+    }
+    void checkSessionOnMount();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {

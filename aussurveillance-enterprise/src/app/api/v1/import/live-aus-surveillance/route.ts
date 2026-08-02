@@ -12,6 +12,8 @@ const REQUIRED_SCOPES: Scope[] = ["legacy:import"];
 
 interface LiveImportPayload {
   limit?: unknown;
+  firebaseEmail?: unknown;
+  firebasePassword?: unknown;
 }
 
 export async function POST(request: Request) {
@@ -28,8 +30,18 @@ export async function POST(request: Request) {
     const limit = Number.isFinite(limitRaw)
       ? Math.min(Math.max(Math.floor(limitRaw), 1), 50_000)
       : 10_000;
+    const firebaseEmail =
+      typeof payload.firebaseEmail === "string" ? payload.firebaseEmail : undefined;
+    const firebasePassword =
+      typeof payload.firebasePassword === "string"
+        ? payload.firebasePassword
+        : undefined;
 
-    const fetched = await fetchLivePublicMarkers({ limit });
+    const fetched = await fetchLivePublicMarkers({
+      limit,
+      firebaseEmail,
+      firebasePassword,
+    });
     const migrated = migrateLegacyMarkersToPortfolio(fetched.markers);
     if (fetched.invalidRows > 0) {
       migrated.warnings.push(
@@ -47,6 +59,7 @@ export async function POST(request: Request) {
       request,
       details: {
         limit,
+        authMode: fetched.authMode,
         totalFetched: fetched.totalFetched,
         importedMarkers: migrated.ingestion.markersAccepted,
       },
@@ -59,6 +72,7 @@ export async function POST(request: Request) {
         normalizedMarkers: fetched.markers.length,
         invalidRows: fetched.invalidRows,
       },
+      authMode: fetched.authMode,
       ...migrated,
     });
   } catch (error) {

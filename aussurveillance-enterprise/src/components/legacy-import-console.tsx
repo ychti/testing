@@ -22,6 +22,7 @@ interface ImportResult {
     generatedObservations: number;
   };
   warnings: string[];
+  authMode?: "anonymous" | "password";
 }
 
 function extractMarkers(payload: unknown): unknown[] {
@@ -48,6 +49,8 @@ export function LegacyImportConsole() {
   const [markerCount, setMarkerCount] = useState<number>(0);
   const [firestoreLimit, setFirestoreLimit] = useState<number>(10000);
   const [updatedAfter, setUpdatedAfter] = useState<string>("");
+  const [firebaseEmail, setFirebaseEmail] = useState<string>("");
+  const [firebasePassword, setFirebasePassword] = useState<string>("");
 
   const highestRiskSites = useMemo(() => {
     if (!result) {
@@ -175,6 +178,8 @@ export function LegacyImportConsole() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           limit: firestoreLimit,
+          firebaseEmail: firebaseEmail.trim() || undefined,
+          firebasePassword: firebasePassword || undefined,
         }),
       });
 
@@ -210,7 +215,11 @@ export function LegacyImportConsole() {
         parsed.fetch && parsed.fetch.totalFetched !== undefined
           ? ` Pulled ${parsed.fetch.totalFetched} live rows.`
           : "";
-      setStatus(`Live import complete.${extra}`);
+      const authMode =
+        "authMode" in parsed && typeof parsed.authMode === "string"
+          ? parsed.authMode
+          : "anonymous";
+      setStatus(`Live import complete via ${authMode} auth.${extra}`);
     } catch (error) {
       setStatus(
         `Live import failed: ${
@@ -285,8 +294,25 @@ export function LegacyImportConsole() {
         </p>
         <p className="mt-1 text-xs text-slate-400">
           Pulls marker data from the live AUS Surveillance Firebase project with
-          anonymous auth and runs enterprise scoring.
+          anonymous auth and runs enterprise scoring. If anonymous is blocked,
+          provide your usual AUS app login below for password fallback.
         </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <input
+            type="email"
+            value={firebaseEmail}
+            onChange={(event) => setFirebaseEmail(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="AUS app email (optional fallback)"
+          />
+          <input
+            type="password"
+            value={firebasePassword}
+            onChange={(event) => setFirebasePassword(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="AUS app password (optional fallback)"
+          />
+        </div>
         <button
           type="button"
           onClick={() => void handleLivePublicImport()}

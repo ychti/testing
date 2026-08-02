@@ -3,6 +3,8 @@ import type { LegacyMarker } from "@/lib/legacy-model";
 
 interface LiveFetchOptions {
   limit: number;
+  firebaseEmail?: string;
+  firebasePassword?: string;
 }
 
 export interface LiveMarkerFetchResult {
@@ -10,6 +12,7 @@ export interface LiveMarkerFetchResult {
   totalFetched: number;
   invalidRows: number;
   source: "live-public";
+  authMode: "anonymous" | "password";
 }
 
 interface FirestoreDocumentResponse {
@@ -110,14 +113,65 @@ async function getAnonymousIdToken(apiKey: string): Promise<string> {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(
-      `Anonymous auth failed (${response.status}). ${text.slice(0, 220)}`,
-    );
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: { message?: string };
+      };
+      if (parsed.error?.message) {
+        message = parsed.error.message;
+      }
+    } catch {
+      // Leave raw text if parsing fails.
+    }
+    throw new Error(`Anonymous auth failed (${response.status}). ${message}`);
   }
 
   const payload = (await response.json()) as { idToken?: string };
   if (!payload.idToken) {
     throw new Error("Anonymous auth did not return idToken.");
+  }
+  return payload.idToken;
+}
+
+async function getPasswordIdToken(
+  apiKey: string,
+  email: string,
+  password: string,
+): Promise<string> {
+  const response = await fetch(
+    `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email,
+        password,
+        returnSecureToken: true,
+      }),
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    let message = text;
+    try {
+      const parsed = JSON.parse(text) as {
+        error?: { message?: string };
+      };
+      if (parsed.error?.message) {
+        message = parsed.error.message;
+      }
+    } catch {
+      // Keep raw text.
+    }
+    throw new Error(`Password auth failed (${response.status}). ${message}`);
+  }
+
+  const payload = (await response.json()) as { idToken?: string };
+  if (!payload.idToken) {
+    throw new Error("Password auth did not return idToken.");
   }
   return payload.idToken;
 }
@@ -129,10 +183,34 @@ function docIdFromName(name: string): string {
 
 export async function fetchLivePublicMarkers({
   limit,
+  firebaseEmail,
+  firebasePassword,
 }: LiveFetchOptions): Promise<LiveMarkerFetchResult> {
   const apiKey = DEFAULT_PUBLIC_API_KEY;
   const projectId = DEFAULT_PUBLIC_PROJECT_ID;
-  const idToken = await getAnonymousIdToken(apiKey);
+  const fallbackEmail =
+    firebaseEmail?.trim() || process.env.PUBLIC_AUS_SURVEILLANCE_EMAIL || "";
+  const fallbackPassword =
+    firebasePassword || process.env.PUBLIC_AUS_SURVEILLANCE_PASSWORD || "";
+
+  let idToken = "";
+  let authMode: "anonymous" | "password" = "anonymous";
+  try {
+    idToken = await getAnonymousIdToken(apiKey);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const anonymousBlocked = message.includes("ADMIN_ONLY_OPERATION");
+    if (!anonymousBlocked) {
+      throw error;
+    }
+    if (!fallbackEmail || !fallbackPassword) {
+      throw new Error(
+        "Anonymous auth is disabled for this Firebase project. Enter your AUS app email/password in the migration form to continue.",
+      );
+    }
+    idToken = await getPasswordIdToken(apiKey, fallbackEmail, fallbackPassword);
+    authMode = "password";
+  }
 
   const pageSize = Math.min(Math.max(limit, 1), 1000);
   let remaining = Math.min(Math.max(limit, 1), 50_000);
@@ -203,6 +281,7 @@ export async function fetchLivePublicMarkers({
     markers,
     totalFetched,
     invalidRows,
+    authMode,
   };
 }
 

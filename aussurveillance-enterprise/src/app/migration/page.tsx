@@ -2,7 +2,7 @@ import { LegacyImportConsole } from "@/components/legacy-import-console";
 import { OperatorAuthPanel } from "@/components/operator-auth-panel";
 
 const checklist = [
-  "Authenticate as an operator (session or scoped API key).",
+  "For quickest start, skip login and click 'Import Live Data Now'.",
   "Click 'Import Live Data Now' for the easiest one-click pipeline.",
   "Export markers from Firestore with id, coordinates, source, quality, lifecycle, and timestamps.",
   "Run payload through /api/v1/import/legacy-markers or pull directly with /api/v1/import/firestore-markers.",

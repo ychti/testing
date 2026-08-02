@@ -79,7 +79,9 @@ export default function ApiDocsPage() {
           </h2>
           <p className="mt-2 text-sm text-slate-300">
             One-click pull from the live AUS Surveillance Firebase project using
-            anonymous auth, then converts to enterprise portfolio scoring.
+            automatic auth fallback, then converts to enterprise portfolio
+            scoring. This endpoint can run without operator login for quick
+            onboarding.
           </p>
           <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
             <code>{`curl -X POST https://your-domain.com/api/v1/import/live-aus-surveillance \

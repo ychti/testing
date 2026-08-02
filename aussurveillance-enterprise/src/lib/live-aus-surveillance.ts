@@ -12,7 +12,7 @@ export interface LiveMarkerFetchResult {
   totalFetched: number;
   invalidRows: number;
   source: "live-public";
-  authMode: "anonymous" | "password";
+  authMode: "public" | "anonymous" | "password";
 }
 
 interface FirestoreDocumentResponse {
@@ -100,6 +100,21 @@ function decodeFirestoreFields(fields: Record<string, FirestoreValue>): Record<s
   return output;
 }
 
+function extractAuthErrorMessage(rawText: string): string {
+  let message = rawText;
+  try {
+    const parsed = JSON.parse(rawText) as {
+      error?: { message?: string };
+    };
+    if (parsed.error?.message) {
+      message = parsed.error.message;
+    }
+  } catch {
+    // Keep raw text if parsing fails.
+  }
+  return message;
+}
+
 async function getAnonymousIdToken(apiKey: string): Promise<string> {
   const response = await fetch(
     `https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${encodeURIComponent(apiKey)}`,
@@ -113,17 +128,7 @@ async function getAnonymousIdToken(apiKey: string): Promise<string> {
 
   if (!response.ok) {
     const text = await response.text();
-    let message = text;
-    try {
-      const parsed = JSON.parse(text) as {
-        error?: { message?: string };
-      };
-      if (parsed.error?.message) {
-        message = parsed.error.message;
-      }
-    } catch {
-      // Leave raw text if parsing fails.
-    }
+    const message = extractAuthErrorMessage(text);
     throw new Error(`Anonymous auth failed (${response.status}). ${message}`);
   }
 
@@ -155,17 +160,7 @@ async function getPasswordIdToken(
 
   if (!response.ok) {
     const text = await response.text();
-    let message = text;
-    try {
-      const parsed = JSON.parse(text) as {
-        error?: { message?: string };
-      };
-      if (parsed.error?.message) {
-        message = parsed.error.message;
-      }
-    } catch {
-      // Keep raw text.
-    }
+    const message = extractAuthErrorMessage(text);
     throw new Error(`Password auth failed (${response.status}). ${message}`);
   }
 
@@ -181,37 +176,62 @@ function docIdFromName(name: string): string {
   return pieces[pieces.length - 1] ?? name;
 }
 
-export async function fetchLivePublicMarkers({
-  limit,
-  firebaseEmail,
-  firebasePassword,
-}: LiveFetchOptions): Promise<LiveMarkerFetchResult> {
-  const apiKey = DEFAULT_PUBLIC_API_KEY;
-  const projectId = DEFAULT_PUBLIC_PROJECT_ID;
-  const fallbackEmail =
-    firebaseEmail?.trim() || process.env.PUBLIC_AUS_SURVEILLANCE_EMAIL || "";
-  const fallbackPassword =
-    firebasePassword || process.env.PUBLIC_AUS_SURVEILLANCE_PASSWORD || "";
-
-  let idToken = "";
-  let authMode: "anonymous" | "password" = "anonymous";
-  try {
-    idToken = await getAnonymousIdToken(apiKey);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    const anonymousBlocked = message.includes("ADMIN_ONLY_OPERATION");
-    if (!anonymousBlocked) {
-      throw error;
-    }
-    if (!fallbackEmail || !fallbackPassword) {
-      throw new Error(
-        "Anonymous auth is disabled for this Firebase project. Enter your AUS app email/password in the migration form to continue.",
-      );
-    }
-    idToken = await getPasswordIdToken(apiKey, fallbackEmail, fallbackPassword);
-    authMode = "password";
+async function fetchDocumentPage({
+  projectId,
+  apiKey,
+  idToken,
+  pageSize,
+  pageToken,
+}: {
+  projectId: string;
+  apiKey: string;
+  idToken?: string;
+  pageSize: number;
+  pageToken?: string;
+}): Promise<FirestoreDocumentResponse> {
+  const params = new URLSearchParams({
+    pageSize: String(pageSize),
+    key: apiKey,
+  });
+  if (pageToken) {
+    params.set("pageToken", pageToken);
   }
 
+  const response = await fetch(
+    `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
+      projectId,
+    )}/databases/(default)/documents/markers?${params.toString()}`,
+    {
+      method: "GET",
+      headers: idToken ? { Authorization: `Bearer ${idToken}` } : undefined,
+      cache: "no-store",
+    },
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    const message = extractAuthErrorMessage(text);
+    throw new Error(`Firestore read failed (${response.status}). ${message}`);
+  }
+
+  return (await response.json()) as FirestoreDocumentResponse;
+}
+
+async function collectMarkers({
+  projectId,
+  apiKey,
+  idToken,
+  limit,
+}: {
+  projectId: string;
+  apiKey: string;
+  idToken?: string;
+  limit: number;
+}): Promise<{
+  markers: LegacyMarker[];
+  totalFetched: number;
+  invalidRows: number;
+}> {
   const pageSize = Math.min(Math.max(limit, 1), 1000);
   let remaining = Math.min(Math.max(limit, 1), 50_000);
   let pageToken: string | undefined;
@@ -221,34 +241,13 @@ export async function fetchLivePublicMarkers({
 
   while (remaining > 0) {
     const thisPageSize = Math.min(pageSize, remaining);
-    const params = new URLSearchParams({
-      pageSize: String(thisPageSize),
+    const payload = await fetchDocumentPage({
+      projectId,
+      apiKey,
+      idToken,
+      pageSize: thisPageSize,
+      pageToken,
     });
-    if (pageToken) {
-      params.set("pageToken", pageToken);
-    }
-
-    const response = await fetch(
-      `https://firestore.googleapis.com/v1/projects/${encodeURIComponent(
-        projectId,
-      )}/databases/(default)/documents/markers?${params.toString()}`,
-      {
-        method: "GET",
-        headers: {
-          Authorization: `Bearer ${idToken}`,
-        },
-        cache: "no-store",
-      },
-    );
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(
-        `Firestore read failed (${response.status}). ${text.slice(0, 280)}`,
-      );
-    }
-
-    const payload = (await response.json()) as FirestoreDocumentResponse;
     const docs = payload.documents ?? [];
     if (docs.length === 0) {
       break;
@@ -276,11 +275,94 @@ export async function fetchLivePublicMarkers({
     pageToken = payload.nextPageToken;
   }
 
+  return { markers, totalFetched, invalidRows };
+}
+
+export async function fetchLivePublicMarkers({
+  limit,
+  firebaseEmail,
+  firebasePassword,
+}: LiveFetchOptions): Promise<LiveMarkerFetchResult> {
+  const apiKey = DEFAULT_PUBLIC_API_KEY;
+  const projectId = DEFAULT_PUBLIC_PROJECT_ID;
+  const fallbackEmail =
+    firebaseEmail?.trim() || process.env.PUBLIC_AUS_SURVEILLANCE_EMAIL || "";
+  const fallbackPassword =
+    firebasePassword || process.env.PUBLIC_AUS_SURVEILLANCE_PASSWORD || "";
+  let authMode: "public" | "anonymous" | "password" = "public";
+  let collected:
+    | {
+        markers: LegacyMarker[];
+        totalFetched: number;
+        invalidRows: number;
+      }
+    | undefined;
+
+  try {
+    collected = await collectMarkers({
+      projectId,
+      apiKey,
+      limit,
+    });
+    authMode = "public";
+  } catch (publicError) {
+    const publicMessage =
+      publicError instanceof Error ? publicError.message : String(publicError);
+    const publicDenied =
+      publicMessage.includes("PERMISSION_DENIED") ||
+      publicMessage.includes("UNAUTHENTICATED") ||
+      publicMessage.includes("401") ||
+      publicMessage.includes("403");
+    if (!publicDenied) {
+      throw publicError;
+    }
+  }
+
+  if (!collected) {
+    try {
+      const anonymousIdToken = await getAnonymousIdToken(apiKey);
+      collected = await collectMarkers({
+        projectId,
+        apiKey,
+        idToken: anonymousIdToken,
+        limit,
+      });
+      authMode = "anonymous";
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const anonymousBlocked = message.includes("ADMIN_ONLY_OPERATION");
+      if (!anonymousBlocked) {
+        throw error;
+      }
+      if (!fallbackEmail || !fallbackPassword) {
+        throw new Error(
+          "Anonymous auth is disabled for this Firebase project. Enter your AUS app email/password in the migration form to continue.",
+        );
+      }
+      const passwordIdToken = await getPasswordIdToken(
+        apiKey,
+        fallbackEmail,
+        fallbackPassword,
+      );
+      collected = await collectMarkers({
+        projectId,
+        apiKey,
+        idToken: passwordIdToken,
+        limit,
+      });
+      authMode = "password";
+    }
+  }
+
+  if (!collected) {
+    throw new Error("Live import failed without a recoverable auth method.");
+  }
+
   return {
     source: "live-public",
-    markers,
-    totalFetched,
-    invalidRows,
+    markers: collected.markers,
+    totalFetched: collected.totalFetched,
+    invalidRows: collected.invalidRows,
     authMode,
   };
 }

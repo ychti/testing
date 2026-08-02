@@ -69,7 +69,7 @@ To connect real Firestore imports, set:
 
 Then use `/migration` and click **Import Firestore**.
 
-Easiest path: sign in at `/migration` and click **Import Live Data Now**.
+Easiest path: open `/migration` and click **Import Live Data Now** (operator login optional for this path).
 If your Firebase blocks anonymous auth, enter your normal AUS app email/password
 in the live import fallback fields on `/migration`.
 

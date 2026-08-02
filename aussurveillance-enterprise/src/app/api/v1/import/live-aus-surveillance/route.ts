@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  AuthContext,
   AuthError,
   authorizeRequest,
   type Scope,
@@ -18,7 +19,22 @@ interface LiveImportPayload {
 
 export async function POST(request: Request) {
   try {
-    const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    let auth: AuthContext = {
+      actorId: "public-import",
+      tenant: "public",
+      authMethod: "api_key",
+      scopes: ["legacy:import"],
+      role: "public",
+    };
+    try {
+      auth = authorizeRequest(request, REQUIRED_SCOPES);
+    } catch (authError) {
+      if (!(authError instanceof AuthError)) {
+        throw authError;
+      }
+      // Public one-click import remains available without operator login.
+    }
+
     let payload: LiveImportPayload = {};
     try {
       payload = (await request.json()) as LiveImportPayload;
@@ -60,6 +76,7 @@ export async function POST(request: Request) {
       details: {
         limit,
         authMode: fetched.authMode,
+        requestedEmailFallback: Boolean(firebaseEmail),
         totalFetched: fetched.totalFetched,
         importedMarkers: migrated.ingestion.markersAccepted,
       },

@@ -294,8 +294,9 @@ export function LegacyImportConsole() {
         </p>
         <p className="mt-1 text-xs text-slate-400">
           Pulls marker data from the live AUS Surveillance Firebase project with
-          anonymous auth and runs enterprise scoring. If anonymous is blocked,
-          provide your usual AUS app login below for password fallback.
+          automatic auth fallback and runs enterprise scoring. You can click this
+          without operator login. If anonymous is blocked, provide your usual AUS
+          app login below for password fallback.
         </p>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <input

@@ -233,7 +233,7 @@ async function collectMarkers({
   invalidRows: number;
 }> {
   const pageSize = Math.min(Math.max(limit, 1), 1000);
-  let remaining = Math.min(Math.max(limit, 1), 50_000);
+  let remaining = Math.min(Math.max(limit, 1), 250_000);
   let pageToken: string | undefined;
   const markers: LegacyMarker[] = [];
   let invalidRows = 0;

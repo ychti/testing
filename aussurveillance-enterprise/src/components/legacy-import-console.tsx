@@ -36,6 +36,18 @@ interface ImportResult {
   tenantId?: string;
   runId?: string;
   importedAt?: string;
+  coverage?: {
+    totalMarkersAfterNormalization: number;
+    duplicateMarkersCollapsed: number;
+    representedStateCount: number;
+    nationalCoverageScore: number;
+    byState: Array<{
+      state: string;
+      markerCount: number;
+      siteCount: number;
+      avgConfidence: number;
+    }>;
+  };
 }
 
 function extractMarkers(payload: unknown): unknown[] {
@@ -60,7 +72,7 @@ export function LegacyImportConsole() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
   const [markerCount, setMarkerCount] = useState<number>(0);
-  const [firestoreLimit, setFirestoreLimit] = useState<number>(10000);
+  const [firestoreLimit, setFirestoreLimit] = useState<number>(50000);
   const [updatedAfter, setUpdatedAfter] = useState<string>("");
   const [firebaseEmail, setFirebaseEmail] = useState<string>("");
   const [firebasePassword, setFirebasePassword] = useState<string>("");
@@ -446,9 +458,9 @@ export function LegacyImportConsole() {
           <input
             type="number"
             min={1}
-            max={50000}
+            max={250000}
             value={firestoreLimit}
-            onChange={(event) => setFirestoreLimit(Number(event.target.value || 10000))}
+            onChange={(event) => setFirestoreLimit(Number(event.target.value || 50000))}
             className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
             placeholder="Limit"
           />
@@ -558,6 +570,62 @@ export function LegacyImportConsole() {
               <li>Generated sites: {result.ingestion.generatedSites}</li>
             </ul>
           </div>
+
+          {result.coverage ? (
+            <div className="rounded-xl border border-white/10 bg-slate-950/65 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-300">
+                National coverage quality
+              </h3>
+              <div className="mt-3 grid gap-2 text-sm text-slate-200 md:grid-cols-2">
+                <p>
+                  Coverage score:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.nationalCoverageScore}/100
+                  </span>
+                </p>
+                <p>
+                  States represented:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.representedStateCount}
+                  </span>
+                </p>
+                <p>
+                  Markers normalized:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.totalMarkersAfterNormalization}
+                  </span>
+                </p>
+                <p>
+                  Duplicates collapsed:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.duplicateMarkersCollapsed}
+                  </span>
+                </p>
+              </div>
+              <div className="mt-4 overflow-auto rounded-lg border border-white/10">
+                <table className="min-w-full text-left text-xs">
+                  <thead className="bg-slate-900/75 uppercase tracking-[0.14em] text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2">State</th>
+                      <th className="px-3 py-2">Markers</th>
+                      <th className="px-3 py-2">Sites</th>
+                      <th className="px-3 py-2">Avg confidence</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10 text-slate-200">
+                    {result.coverage.byState.map((row) => (
+                      <tr key={row.state}>
+                        <td className="px-3 py-2 font-semibold text-white">{row.state}</td>
+                        <td className="px-3 py-2">{row.markerCount}</td>
+                        <td className="px-3 py-2">{row.siteCount}</td>
+                        <td className="px-3 py-2">{row.avgConfidence}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           {result.warnings.length > 0 ? (
             <div className="rounded-xl border border-amber-300/35 bg-amber-300/10 p-4 text-sm text-amber-100">

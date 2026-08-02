@@ -28,6 +28,18 @@ export interface ImportRunRecord {
     generatedSites: number;
     generatedObservations: number;
   };
+  coverage?: {
+    totalMarkersAfterNormalization: number;
+    duplicateMarkersCollapsed: number;
+    representedStateCount: number;
+    nationalCoverageScore: number;
+    byState: Array<{
+      state: string;
+      markerCount: number;
+      siteCount: number;
+      avgConfidence: number;
+    }>;
+  };
   summary: PortfolioSummary;
 }
 
@@ -162,6 +174,7 @@ export async function saveImportRun(input: {
   actorId: string;
   warnings: string[];
   ingestion: ImportRunRecord["ingestion"];
+  coverage?: ImportRunRecord["coverage"];
   summary: PortfolioSummary;
 }): Promise<ImportRunRecord> {
   return withStoreWrite((store) => {
@@ -181,6 +194,7 @@ export async function saveImportRun(input: {
       createdAt: nowIso(),
       warnings: input.warnings,
       ingestion: input.ingestion,
+      coverage: input.coverage,
       summary: input.summary,
     };
     store.importRuns.push(run);

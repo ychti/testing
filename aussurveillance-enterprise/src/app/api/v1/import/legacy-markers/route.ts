@@ -56,9 +56,9 @@ export async function POST(request: Request) {
       );
     }
 
-    if (payload.markers.length > 50_000) {
+    if (payload.markers.length > 250_000) {
       return NextResponse.json(
-        { error: "markers array exceeds 50,000 record limit for preview ingestion." },
+        { error: "markers array exceeds 250,000 record limit for preview ingestion." },
         { status: 413 },
       );
     }
@@ -74,6 +74,7 @@ export async function POST(request: Request) {
       actorId: auth.actorId,
       warnings: result.warnings,
       ingestion: result.ingestion,
+      coverage: result.coverage,
       summary: result.summary,
     });
 

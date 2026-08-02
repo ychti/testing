@@ -20,6 +20,18 @@ export interface LegacyMigrationResult {
     generatedSites: number;
     generatedObservations: number;
   };
+  coverage: {
+    totalMarkersAfterNormalization: number;
+    duplicateMarkersCollapsed: number;
+    representedStateCount: number;
+    nationalCoverageScore: number;
+    byState: Array<{
+      state: string;
+      markerCount: number;
+      siteCount: number;
+      avgConfidence: number;
+    }>;
+  };
   warnings: string[];
 }
 
@@ -29,6 +41,7 @@ interface SiteAccumulator {
 }
 
 const CAMERA_TYPES = new Set(["cctv", "speed", "redlight", "alpr", "combined"]);
+const KNOWN_STATES = ["NSW", "QLD", "VIC", "SA", "WA", "ACT", "NT", "TAS"];
 
 function clamp(value: number, min = 0, max = 1): number {
   return Math.min(max, Math.max(min, value));
@@ -108,6 +121,31 @@ function markerAgeDays(marker: LegacyMarker): number {
   }
   const diffMs = Date.now() - parsed.getTime();
   return Math.max(diffMs / (1000 * 60 * 60 * 24), 0);
+}
+
+function markerTimestamp(marker: LegacyMarker): number {
+  const iso = marker.updatedAt ?? marker.createdAt;
+  if (!iso) {
+    return 0;
+  }
+  const parsed = new Date(iso).getTime();
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function markerDedupKey(marker: LegacyMarker): string {
+  const lat = Math.round(marker.lat * 10_000) / 10_000;
+  const lng = Math.round(marker.lng * 10_000) / 10_000;
+  const directionBucket = Number.isFinite(marker.direction)
+    ? Math.round((marker.direction ?? 0) / 15) * 15
+    : "na";
+  return [
+    marker.type,
+    marker.source ?? "user",
+    marker.cctvMode ?? "none",
+    directionBucket,
+    lat.toFixed(4),
+    lng.toFixed(4),
+  ].join("|");
 }
 
 function siteLabel(region: string, latCell: number, lngCell: number): string {
@@ -205,7 +243,9 @@ export function migrateLegacyMarkersToPortfolio(
 ): LegacyMigrationResult {
   const warnings: string[] = [];
   const accepted: LegacyMarker[] = [];
+  const dedupedByKey = new Map<string, LegacyMarker>();
   let invalidMarkers = 0;
+  let duplicateMarkersCollapsed = 0;
 
   for (const marker of rawMarkers) {
     const isValidCoord =
@@ -218,13 +258,40 @@ export function migrateLegacyMarkersToPortfolio(
       continue;
     }
     accepted.push(marker);
+    const key = markerDedupKey(marker);
+    const existing = dedupedByKey.get(key);
+    if (!existing) {
+      dedupedByKey.set(key, marker);
+      continue;
+    }
+    duplicateMarkersCollapsed += 1;
+    const existingScore = buildLegacyMarkerQuality(existing).confidenceScore;
+    const nextScore = buildLegacyMarkerQuality(marker).confidenceScore;
+    const existingTimestamp = markerTimestamp(existing);
+    const nextTimestamp = markerTimestamp(marker);
+    if (
+      nextScore > existingScore ||
+      (nextScore === existingScore && nextTimestamp > existingTimestamp)
+    ) {
+      dedupedByKey.set(key, marker);
+    }
   }
+  const normalizedMarkers = Array.from(dedupedByKey.values());
 
   const accumulators = new Map<string, SiteAccumulator>();
-  for (const marker of accepted) {
+  const stateConfidence = new Map<string, { total: number; count: number }>();
+  const stateMarkerCount = new Map<string, number>();
+  for (const marker of normalizedMarkers) {
     const latCell = roundToCell(marker.lat);
     const lngCell = roundToCell(marker.lng);
     const region = inferRegion(marker.lat, marker.lng);
+    stateMarkerCount.set(region, (stateMarkerCount.get(region) ?? 0) + 1);
+    const confidence = buildLegacyMarkerQuality(marker).confidenceScore;
+    const confidenceBucket = stateConfidence.get(region) ?? { total: 0, count: 0 };
+    confidenceBucket.total += confidence;
+    confidenceBucket.count += 1;
+    stateConfidence.set(region, confidenceBucket);
+
     const siteId = `${region.toLowerCase()}-${latCell.toFixed(2)}-${lngCell.toFixed(2)}`;
     const existing = accumulators.get(siteId);
     if (existing) {
@@ -244,6 +311,7 @@ export function migrateLegacyMarkersToPortfolio(
 
   const sites: ScoringSite[] = [];
   const observations: ScoringObservation[] = [];
+  const stateSiteSet = new Map<string, Set<string>>();
 
   for (const [, accumulator] of accumulators) {
     const markerTypes = new Set(accumulator.markers.map((marker) => marker.type));
@@ -253,6 +321,9 @@ export function migrateLegacyMarkersToPortfolio(
       accumulator.site.region,
     );
     sites.push(accumulator.site);
+    const siteSet = stateSiteSet.get(accumulator.site.region) ?? new Set<string>();
+    siteSet.add(accumulator.site.id);
+    stateSiteSet.set(accumulator.site.region, siteSet);
     observations.push(buildObservationForSite(accumulator.site.id, accumulator.markers));
   }
 
@@ -262,11 +333,55 @@ export function migrateLegacyMarkersToPortfolio(
   if (invalidMarkers > 0) {
     warnings.push(`${invalidMarkers} marker rows were invalid and skipped.`);
   }
-  if (accepted.length > 0 && accepted.length < 250) {
+  if (normalizedMarkers.length > 0 && normalizedMarkers.length < 250) {
     warnings.push(
       "Portfolio preview is based on fewer than 250 markers; confidence may be unstable.",
     );
   }
+  if (duplicateMarkersCollapsed > 0) {
+    const ratio = duplicateMarkersCollapsed / Math.max(accepted.length, 1);
+    if (ratio > 0.2) {
+      warnings.push(
+        "High duplicate density detected in import feed; verify upstream deduplication quality.",
+      );
+    }
+  }
+
+  const byState = Array.from(stateMarkerCount.entries())
+    .map(([state, markerCount]) => {
+      const confidence = stateConfidence.get(state);
+      const avgConfidence =
+        confidence && confidence.count > 0
+          ? Math.round(confidence.total / confidence.count)
+          : 0;
+      return {
+        state,
+        markerCount,
+        siteCount: stateSiteSet.get(state)?.size ?? 0,
+        avgConfidence,
+      };
+    })
+    .sort((a, b) => b.markerCount - a.markerCount);
+
+  const representedStates = KNOWN_STATES.filter((state) =>
+    byState.some((row) => row.state === state && row.markerCount > 0),
+  );
+  if (representedStates.length < 5) {
+    warnings.push(
+      "National coverage is currently sparse across states; increase multi-state imports for insurer-grade viability.",
+    );
+  }
+  const globalConfidence =
+    byState.length > 0
+      ? byState.reduce((sum, row) => sum + row.avgConfidence * row.markerCount, 0) /
+        byState.reduce((sum, row) => sum + row.markerCount, 0)
+      : 0;
+  const distributionScore = representedStates.length / KNOWN_STATES.length;
+  const depthScore = clamp(normalizedMarkers.length / 75_000);
+  const qualityScore = clamp(globalConfidence / 100);
+  const nationalCoverageScore = Math.round(
+    (distributionScore * 0.45 + depthScore * 0.35 + qualityScore * 0.2) * 100,
+  );
 
   const summary = buildPortfolioSummary(
     sites.length > 0
@@ -305,10 +420,17 @@ export function migrateLegacyMarkersToPortfolio(
     summary,
     ingestion: {
       markersReceived: rawMarkers.length,
-      markersAccepted: accepted.length,
+      markersAccepted: normalizedMarkers.length,
       invalidMarkers,
       generatedSites: sites.length,
       generatedObservations: observations.length,
+    },
+    coverage: {
+      totalMarkersAfterNormalization: normalizedMarkers.length,
+      duplicateMarkersCollapsed,
+      representedStateCount: representedStates.length,
+      nationalCoverageScore,
+      byState,
     },
     warnings,
   };

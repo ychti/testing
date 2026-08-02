@@ -65,7 +65,7 @@ export async function POST(request: Request) {
 
     const limitRaw = Number(payload.limit ?? 10_000);
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50_000)
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 250_000)
       : 10_000;
     const firebaseEmail =
       typeof payload.firebaseEmail === "string" ? payload.firebaseEmail : undefined;
@@ -94,6 +94,7 @@ export async function POST(request: Request) {
       actorId: auth.actorId,
       warnings: migrated.warnings,
       ingestion: migrated.ingestion,
+      coverage: migrated.coverage,
       summary: migrated.summary,
     });
 

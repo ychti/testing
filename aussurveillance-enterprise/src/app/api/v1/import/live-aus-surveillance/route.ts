@@ -8,6 +8,8 @@ import {
 import { logAuditEvent } from "@/lib/audit-log";
 import { fetchLivePublicMarkers } from "@/lib/live-aus-surveillance";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
+import { saveImportRun } from "@/lib/tenant-store";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 const REQUIRED_SCOPES: Scope[] = ["legacy:import"];
 
@@ -15,6 +17,14 @@ interface LiveImportPayload {
   limit?: unknown;
   firebaseEmail?: unknown;
   firebasePassword?: unknown;
+  tenantId?: unknown;
+}
+
+function allowPublicLiveImport(): boolean {
+  return (
+    process.env.ALLOW_PUBLIC_LIVE_IMPORT === "true" ||
+    process.env.NODE_ENV !== "production"
+  );
 }
 
 export async function POST(request: Request) {
@@ -32,8 +42,19 @@ export async function POST(request: Request) {
       if (!(authError instanceof AuthError)) {
         throw authError;
       }
-      // Public one-click import remains available without operator login.
+      if (!allowPublicLiveImport()) {
+        throw authError;
+      }
     }
+    enforceRateLimit(
+      request,
+      {
+        keyPrefix: "import-live",
+        maxRequests: auth.actorId === "public-import" ? 6 : 20,
+        windowMs: 60_000,
+      },
+      auth.actorId,
+    );
 
     let payload: LiveImportPayload = {};
     try {
@@ -52,6 +73,8 @@ export async function POST(request: Request) {
       typeof payload.firebasePassword === "string"
         ? payload.firebasePassword
         : undefined;
+    const tenantId =
+      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined;
 
     const fetched = await fetchLivePublicMarkers({
       limit,
@@ -64,6 +87,15 @@ export async function POST(request: Request) {
         `${fetched.invalidRows} public Firestore rows could not be normalized and were skipped.`,
       );
     }
+    const run = await saveImportRun({
+      tenantId,
+      source: "live-public",
+      authMode: fetched.authMode,
+      actorId: auth.actorId,
+      warnings: migrated.warnings,
+      ingestion: migrated.ingestion,
+      summary: migrated.summary,
+    });
 
     await logAuditEvent({
       action: "import.live-aus-surveillance",
@@ -74,6 +106,8 @@ export async function POST(request: Request) {
       authMethod: auth.authMethod,
       request,
       details: {
+        tenantId: run.tenantId,
+        runId: run.id,
         limit,
         authMode: fetched.authMode,
         requestedEmailFallback: Boolean(firebaseEmail),
@@ -90,9 +124,28 @@ export async function POST(request: Request) {
         invalidRows: fetched.invalidRows,
       },
       authMode: fetched.authMode,
+      tenantId: run.tenantId,
+      runId: run.id,
+      importedAt: run.createdAt,
       ...migrated,
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      await logAuditEvent({
+        action: "import.live-aus-surveillance",
+        status: "denied",
+        actorId: "rate-limited",
+        request,
+        details: { reason: error.message },
+      });
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
     if (error instanceof AuthError) {
       await logAuditEvent({
         action: "import.live-aus-surveillance",

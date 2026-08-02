@@ -15,7 +15,9 @@ export type Scope =
   | "site:read"
   | "legacy:import"
   | "firestore:read"
-  | "audit:read";
+  | "audit:read"
+  | "tenant:read"
+  | "tenant:write";
 
 export interface SessionPayload {
   sub: string;
@@ -53,6 +55,8 @@ const DEFAULT_SESSION_SCOPES: Scope[] = [
   "legacy:import",
   "firestore:read",
   "audit:read",
+  "tenant:read",
+  "tenant:write",
 ];
 
 function nowSeconds(): number {
@@ -60,7 +64,16 @@ function nowSeconds(): number {
 }
 
 function getSessionSecret(): string {
-  return process.env.ENTERPRISE_SESSION_SECRET ?? "dev-session-secret-change-me";
+  const configured = process.env.ENTERPRISE_SESSION_SECRET;
+  if (configured && configured.length > 0) {
+    return configured;
+  }
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "ENTERPRISE_SESSION_SECRET must be configured in production.",
+    );
+  }
+  return "dev-session-secret-change-me";
 }
 
 function base64UrlEncode(value: string): string {
@@ -203,10 +216,14 @@ export function validateOperatorCredentials(
   email: string,
   password: string,
 ): boolean {
+  const configuredEmail = process.env.ENTERPRISE_ADMIN_EMAIL;
+  const configuredPassword = process.env.ENTERPRISE_ADMIN_PASSWORD;
   const expectedEmail =
-    process.env.ENTERPRISE_ADMIN_EMAIL?.toLowerCase() ?? DEFAULT_ADMIN_EMAIL;
+    configuredEmail?.toLowerCase() ??
+    (process.env.NODE_ENV === "production" ? "" : DEFAULT_ADMIN_EMAIL);
   const expectedPassword =
-    process.env.ENTERPRISE_ADMIN_PASSWORD ?? DEFAULT_ADMIN_PASSWORD;
+    configuredPassword ??
+    (process.env.NODE_ENV === "production" ? "" : DEFAULT_ADMIN_PASSWORD);
 
   return email.trim().toLowerCase() === expectedEmail && password === expectedPassword;
 }

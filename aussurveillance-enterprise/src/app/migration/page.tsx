@@ -1,5 +1,6 @@
 import { LegacyImportConsole } from "@/components/legacy-import-console";
 import { OperatorAuthPanel } from "@/components/operator-auth-panel";
+import Link from "next/link";
 
 const checklist = [
   "For quickest start, skip login and click 'Import Live Data Now'.",
@@ -25,6 +26,16 @@ export default function MigrationPage() {
           This migration flow preserves your existing marker confidence and
           provenance semantics while converting data into an insurer-ready risk
           intelligence model.
+        </p>
+        <p className="text-sm text-slate-400">
+          After importing, review saved history and trends in{" "}
+          <Link
+            href="/customers"
+            className="font-semibold text-cyan-200 underline-offset-2 hover:underline"
+          >
+            Customer Intelligence
+          </Link>
+          .
         </p>
       </section>
 

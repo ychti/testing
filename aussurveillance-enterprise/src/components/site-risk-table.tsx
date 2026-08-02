@@ -1,5 +1,5 @@
 import { formatCurrencyAud, formatDateTime } from "@/lib/format";
-import type { SiteScore } from "@/lib/security-intelligence";
+import type { SiteScore } from "@/lib/scoring-engine";
 import { ScorePill } from "./score-pill";
 
 export function SiteRiskTable({ rows }: { rows: SiteScore[] }) {

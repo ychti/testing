@@ -101,6 +101,32 @@ export default function ApiDocsPage() {
   -H "authorization: Bearer <api-key>"`}</code>
           </pre>
         </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">GET/POST /api/v1/tenants</h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Manage customer workspaces. Every import run is persisted to a tenant
+            for historical reporting and trend analysis.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/tenants \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"name":"Acme Underwriting","industry":"insurance"}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            GET /api/v1/portfolio/latest and /api/v1/portfolio/trend
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Retrieve latest saved tenant snapshot and longitudinal KPI trend for
+            executive reporting.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -s "https://your-domain.com/api/v1/portfolio/latest?tenantId=tenant-123" \
+  -H "authorization: Bearer <api-key>"`}</code>
+          </pre>
+        </article>
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-slate-900/70 p-6">
@@ -119,6 +145,10 @@ export default function ApiDocsPage() {
           </li>
           <li>
             Session logout: <code>POST /api/v1/auth/logout</code>.
+          </li>
+          <li>
+            All high-cost endpoints are rate limited and return HTTP 429 with{" "}
+            <code>Retry-After</code>.
           </li>
         </ul>
       </section>

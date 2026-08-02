@@ -6,6 +6,7 @@ import {
   validateOperatorCredentials,
 } from "@/lib/enterprise-auth";
 import { logAuditEvent } from "@/lib/audit-log";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 interface LoginPayload {
   email?: unknown;
@@ -13,6 +14,24 @@ interface LoginPayload {
 }
 
 export async function POST(request: Request) {
+  try {
+    enforceRateLimit(request, {
+      keyPrefix: "auth-login",
+      maxRequests: 20,
+      windowMs: 60_000,
+    });
+  } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
+  }
+
   let payload: LoginPayload;
   try {
     payload = (await request.json()) as LoginPayload;

@@ -6,12 +6,22 @@ import {
 } from "@/lib/enterprise-auth";
 import { logAuditEvent } from "@/lib/audit-log";
 import { fetchFirestoreMarkers } from "@/lib/firestore-markers";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 const REQUIRED_SCOPES: Scope[] = ["firestore:read"];
 
 export async function GET(request: Request) {
   try {
     const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    enforceRateLimit(
+      request,
+      {
+        keyPrefix: "firestore-markers-read",
+        maxRequests: 20,
+        windowMs: 60_000,
+      },
+      auth.actorId,
+    );
     const url = new URL(request.url);
     const limitRaw = Number(url.searchParams.get("limit") ?? 5000);
     const limit = Number.isFinite(limitRaw)
@@ -43,6 +53,22 @@ export async function GET(request: Request) {
       updatedAfter: updatedAfter ?? null,
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      await logAuditEvent({
+        action: "firestore.markers.read",
+        status: "denied",
+        actorId: "rate-limited",
+        request,
+        details: { reason: error.message },
+      });
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
     if (error instanceof AuthError) {
       await logAuditEvent({
         action: "firestore.markers.read",

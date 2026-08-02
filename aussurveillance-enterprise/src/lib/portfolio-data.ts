@@ -1,15 +1,18 @@
 import { fetchFirestoreMarkers } from "@/lib/firestore-markers";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
 import { getPortfolioSummary } from "@/lib/security-intelligence";
+import { getLatestImportRun } from "@/lib/tenant-store";
+import type { PortfolioSummary } from "@/lib/scoring-engine";
 
 interface SourceOptions {
-  source: "mock" | "firestore";
+  source: "mock" | "firestore" | "snapshot";
   limit: number;
   updatedAfter?: string;
+  tenantId?: string;
 }
 
 export interface PortfolioFetchResult {
-  summary: ReturnType<typeof getPortfolioSummary>;
+  summary: PortfolioSummary;
   ingestion?: {
     markersReceived: number;
     markersAccepted: number;
@@ -18,17 +21,43 @@ export interface PortfolioFetchResult {
     generatedObservations: number;
   };
   warnings: string[];
-  source: "mock" | "firestore";
+  source: "mock" | "firestore" | "snapshot";
+  tenantId?: string;
+  runId?: string;
+  importedAt?: string;
 }
 
 export async function fetchPortfolioData({
   source,
   limit,
   updatedAfter,
+  tenantId,
 }: SourceOptions): Promise<PortfolioFetchResult> {
+  if (tenantId && source !== "firestore") {
+    const latest = await getLatestImportRun(tenantId);
+    if (latest) {
+      return {
+        summary: latest.summary,
+        source: "snapshot",
+        warnings: latest.warnings,
+        ingestion: latest.ingestion,
+        tenantId,
+        runId: latest.id,
+        importedAt: latest.createdAt,
+      };
+    }
+    if (source === "snapshot") {
+      return {
+        summary: getPortfolioSummary() as PortfolioSummary,
+        source: "mock",
+        warnings: [`No snapshot found for tenant ${tenantId}; showing mock data.`],
+      };
+    }
+  }
+
   if (source === "mock") {
     return {
-      summary: getPortfolioSummary(),
+      summary: getPortfolioSummary() as PortfolioSummary,
       source: "mock",
       warnings: [],
     };
@@ -44,10 +73,11 @@ export async function fetchPortfolioData({
   }
 
   return {
-    summary: migration.summary as ReturnType<typeof getPortfolioSummary>,
+    summary: migration.summary,
     source: "firestore",
     ingestion: migration.ingestion,
     warnings,
+    tenantId,
   };
 }
 

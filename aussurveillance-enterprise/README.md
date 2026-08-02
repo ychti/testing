@@ -15,21 +15,36 @@ This application demonstrates the transformation from a camera mapping concept i
 - **Trust** (`/trust`): governance and compliance controls
 - **API Docs** (`/api`): endpoint references and sample payloads
 - **Migration Console** (`/migration`): import legacy markers and preview enterprise scoring
+- **Customers** (`/customers`): tenant snapshots, trend analytics, import history
 - **Operations** (`/operations`): operator auth and audit monitoring
 
 ## API Endpoints
 
 - `GET /api/v1/portfolio`
+- `GET /api/v1/portfolio/latest?tenantId=<id>`
+- `GET /api/v1/portfolio/trend?tenantId=<id>`
 - `GET /api/v1/sites`
 - `GET /api/v1/site?siteId=<id>`
 - `POST /api/v1/import/legacy-markers`
 - `POST /api/v1/import/firestore-markers`
 - `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
 - `GET /api/v1/firestore/markers`
+- `GET /api/v1/imports/history?tenantId=<id>`
+- `GET /api/v1/tenants`
+- `POST /api/v1/tenants`
 - `GET /api/v1/audit`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/auth/me`
+
+## Enterprise Features
+
+- tenant persistence for every import run
+- historical trend snapshots (risk/confidence/freshness/exposure deltas)
+- workspace-scoped import history
+- audited API actions
+- rate limiting on high-cost endpoints
+- auth fallback strategy for live imports
 
 ## Core Engine
 
@@ -72,6 +87,21 @@ Then use `/migration` and click **Import Firestore**.
 Easiest path: open `/migration` and click **Import Live Data Now** (operator login optional for this path).
 If your Firebase blocks anonymous auth, enter your normal AUS app email/password
 in the live import fallback fields on `/migration`.
+
+For local dev convenience, you may set:
+- `ALLOW_PUBLIC_LIVE_IMPORT=true`
+- `ALLOW_PUBLIC_TENANT_READ=true`
+- `ALLOW_PUBLIC_TENANT_WRITE=true`
+
+### Production security notes
+
+Before production rollout:
+- set non-default `ENTERPRISE_ADMIN_EMAIL` and `ENTERPRISE_ADMIN_PASSWORD`
+- set a strong `ENTERPRISE_SESSION_SECRET`
+- configure `ENTERPRISE_API_KEYS_JSON` with scoped keys
+- set `ALLOW_PUBLIC_LIVE_IMPORT=false`
+- set `ALLOW_PUBLIC_TENANT_READ=false`
+- move tenant/audit persistence from local files to managed infrastructure
 
 ## Quality Checks
 

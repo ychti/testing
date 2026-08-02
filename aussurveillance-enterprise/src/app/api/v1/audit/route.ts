@@ -5,12 +5,22 @@ import {
   type Scope,
 } from "@/lib/enterprise-auth";
 import { logAuditEvent, readRecentAuditEvents } from "@/lib/audit-log";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 const REQUIRED_SCOPES: Scope[] = ["audit:read"];
 
 export async function GET(request: Request) {
   try {
     const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    enforceRateLimit(
+      request,
+      {
+        keyPrefix: "audit-read",
+        maxRequests: 30,
+        windowMs: 60_000,
+      },
+      auth.actorId,
+    );
     const url = new URL(request.url);
     const limitRaw = Number(url.searchParams.get("limit") ?? 100);
     const limit = Number.isFinite(limitRaw)
@@ -34,6 +44,15 @@ export async function GET(request: Request) {
       events,
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
     if (error instanceof AuthError) {
       await logAuditEvent({
         action: "audit.read",

@@ -7,17 +7,29 @@ import {
 import { logAuditEvent } from "@/lib/audit-log";
 import { fetchFirestoreMarkers } from "@/lib/firestore-markers";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
+import { saveImportRun } from "@/lib/tenant-store";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 const REQUIRED_SCOPES: Scope[] = ["legacy:import", "firestore:read"];
 
 interface FirestoreImportPayload {
   limit?: unknown;
   updatedAfter?: unknown;
+  tenantId?: unknown;
 }
 
 export async function POST(request: Request) {
   try {
     const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    enforceRateLimit(
+      request,
+      {
+        keyPrefix: "import-firestore",
+        maxRequests: 20,
+        windowMs: 60_000,
+      },
+      auth.actorId,
+    );
     let payload: FirestoreImportPayload = {};
     try {
       payload = (await request.json()) as FirestoreImportPayload;
@@ -33,6 +45,8 @@ export async function POST(request: Request) {
       typeof payload.updatedAfter === "string" && payload.updatedAfter.length > 0
         ? payload.updatedAfter
         : undefined;
+    const tenantId =
+      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined;
 
     const fetched = await fetchFirestoreMarkers({ limit, updatedAfter });
     const migrated = migrateLegacyMarkersToPortfolio(fetched.markers);
@@ -41,6 +55,15 @@ export async function POST(request: Request) {
         `${fetched.invalidRows} Firestore rows could not be normalized and were skipped.`,
       );
     }
+    const run = await saveImportRun({
+      tenantId,
+      source: "firestore-admin",
+      authMode: auth.authMethod,
+      actorId: auth.actorId,
+      warnings: migrated.warnings,
+      ingestion: migrated.ingestion,
+      summary: migrated.summary,
+    });
 
     await logAuditEvent({
       action: "import.firestore-markers",
@@ -51,6 +74,8 @@ export async function POST(request: Request) {
       authMethod: auth.authMethod,
       request,
       details: {
+        tenantId: run.tenantId,
+        runId: run.id,
         limit,
         updatedAfter: updatedAfter ?? null,
         totalFetched: fetched.totalFetched,
@@ -65,9 +90,21 @@ export async function POST(request: Request) {
         normalizedMarkers: fetched.markers.length,
         invalidRows: fetched.invalidRows,
       },
+      tenantId: run.tenantId,
+      runId: run.id,
+      importedAt: run.createdAt,
       ...migrated,
     });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
     if (error instanceof AuthError) {
       await logAuditEvent({
         action: "import.firestore-markers",

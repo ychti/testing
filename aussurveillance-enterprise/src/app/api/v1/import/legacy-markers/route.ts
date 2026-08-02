@@ -5,14 +5,17 @@ import {
   type Scope,
 } from "@/lib/enterprise-auth";
 import { logAuditEvent } from "@/lib/audit-log";
+import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 import {
   isValidLegacyMarker,
   type LegacyMarker,
 } from "@/lib/legacy-model";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
+import { saveImportRun } from "@/lib/tenant-store";
 
 interface ImportPayload {
   markers?: unknown;
+  tenantId?: unknown;
 }
 
 const REQUIRED_SCOPES: Scope[] = ["legacy:import"];
@@ -20,6 +23,15 @@ const REQUIRED_SCOPES: Scope[] = ["legacy:import"];
 export async function POST(request: Request) {
   try {
     const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    enforceRateLimit(
+      request,
+      {
+        keyPrefix: "import-legacy",
+        maxRequests: 20,
+        windowMs: 60_000,
+      },
+      auth.actorId,
+    );
     let payload: ImportPayload;
     try {
       payload = (await request.json()) as ImportPayload;
@@ -53,6 +65,17 @@ export async function POST(request: Request) {
 
     const filtered = payload.markers.filter(isValidLegacyMarker) as LegacyMarker[];
     const result = migrateLegacyMarkersToPortfolio(filtered);
+    const tenantId =
+      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined;
+    const run = await saveImportRun({
+      tenantId,
+      source: "legacy-file",
+      authMode: auth.authMethod,
+      actorId: auth.actorId,
+      warnings: result.warnings,
+      ingestion: result.ingestion,
+      summary: result.summary,
+    });
 
     await logAuditEvent({
       action: "import.legacy-markers",
@@ -63,13 +86,29 @@ export async function POST(request: Request) {
       authMethod: auth.authMethod,
       request,
       details: {
+        tenantId: run.tenantId,
+        runId: run.id,
         received: payload.markers.length,
         accepted: filtered.length,
       },
     });
 
-    return NextResponse.json(result);
+    return NextResponse.json({
+      ...result,
+      tenantId: run.tenantId,
+      runId: run.id,
+      importedAt: run.createdAt,
+    });
   } catch (error) {
+    if (error instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: error.message },
+        {
+          status: error.status,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
     if (error instanceof AuthError) {
       await logAuditEvent({
         action: "import.legacy-markers",

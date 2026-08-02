@@ -1,8 +1,18 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { SiteScore } from "@/lib/scoring-engine";
 import { formatCurrencyAud } from "@/lib/format";
+
+interface TenantRecord {
+  id: string;
+  name: string;
+  industry: string;
+  ownerEmail?: string;
+  createdAt: string;
+  updatedAt: string;
+  status: "active" | "paused";
+}
 
 interface ImportResult {
   summary: {
@@ -22,7 +32,10 @@ interface ImportResult {
     generatedObservations: number;
   };
   warnings: string[];
-  authMode?: "anonymous" | "password";
+  authMode?: "public" | "anonymous" | "password";
+  tenantId?: string;
+  runId?: string;
+  importedAt?: string;
 }
 
 function extractMarkers(payload: unknown): unknown[] {
@@ -51,6 +64,91 @@ export function LegacyImportConsole() {
   const [updatedAfter, setUpdatedAfter] = useState<string>("");
   const [firebaseEmail, setFirebaseEmail] = useState<string>("");
   const [firebasePassword, setFirebasePassword] = useState<string>("");
+  const [tenants, setTenants] = useState<TenantRecord[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState<string>("");
+  const [newTenantName, setNewTenantName] = useState<string>("");
+  const [newTenantIndustry, setNewTenantIndustry] = useState<string>("security");
+
+  async function loadTenants() {
+    try {
+      const response = await fetch("/api/v1/tenants");
+      const payload = (await response.json()) as
+        | { tenants: TenantRecord[] }
+        | { error: string };
+      if (!response.ok || !("tenants" in payload)) {
+        return;
+      }
+      const fetched = payload.tenants;
+      setTenants(fetched);
+
+      const persisted =
+        typeof window !== "undefined"
+          ? window.localStorage.getItem("aus-intel-tenant-id")
+          : null;
+      if (persisted && fetched.some((tenant) => tenant.id === persisted)) {
+        setSelectedTenantId(persisted);
+        return;
+      }
+      if (!selectedTenantId && fetched.length > 0) {
+        setSelectedTenantId(fetched[0].id);
+      }
+    } catch {
+      // Non-blocking for initial render.
+    }
+  }
+
+  useEffect(() => {
+    void loadTenants();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedTenantId) {
+      return;
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
+    }
+  }, [selectedTenantId]);
+
+  async function handleCreateTenant() {
+    if (newTenantName.trim().length < 3) {
+      setStatus("Tenant name must be at least 3 characters.");
+      return;
+    }
+    setLoading(true);
+    try {
+      const response = await fetch("/api/v1/tenants", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: newTenantName.trim(),
+          industry: newTenantIndustry.trim() || "security",
+        }),
+      });
+      const payload = (await response.json()) as
+        | { tenant: TenantRecord }
+        | { error: string };
+      if (!response.ok || !("tenant" in payload)) {
+        setStatus(
+          "Tenant creation failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        return;
+      }
+      setStatus(`Tenant "${payload.tenant.name}" created.`);
+      setNewTenantName("");
+      setSelectedTenantId(payload.tenant.id);
+      await loadTenants();
+    } catch (error) {
+      setStatus(
+        `Tenant creation failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
 
   const highestRiskSites = useMemo(() => {
     if (!result) {
@@ -83,7 +181,7 @@ export function LegacyImportConsole() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ markers }),
+        body: JSON.stringify({ markers, tenantId: selectedTenantId || undefined }),
       });
 
       const responseJson = (await response.json()) as ImportResult | { error: string };
@@ -121,6 +219,7 @@ export function LegacyImportConsole() {
         body: JSON.stringify({
           limit: firestoreLimit,
           updatedAfter: updatedAfter.trim() || undefined,
+          tenantId: selectedTenantId || undefined,
         }),
       });
 
@@ -180,6 +279,7 @@ export function LegacyImportConsole() {
           limit: firestoreLimit,
           firebaseEmail: firebaseEmail.trim() || undefined,
           firebasePassword: firebasePassword || undefined,
+          tenantId: selectedTenantId || undefined,
         }),
       });
 
@@ -240,6 +340,59 @@ export function LegacyImportConsole() {
           Upload a JSON export from legacy Firestore markers to generate enterprise
           risk intelligence previews.
         </p>
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-white">Customer workspace</p>
+        <p className="mt-1 text-xs text-slate-400">
+          Every import is saved under a tenant for historical reporting.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+          <select
+            value={selectedTenantId}
+            onChange={(event) => setSelectedTenantId(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+          >
+            {tenants.length === 0 ? (
+              <option value="">No tenant loaded</option>
+            ) : (
+              tenants.map((tenant) => (
+                <option key={tenant.id} value={tenant.id}>
+                  {tenant.name} ({tenant.industry})
+                </option>
+              ))
+            )}
+          </select>
+          <button
+            type="button"
+            onClick={() => void loadTenants()}
+            className="rounded-lg border border-white/15 bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/5"
+          >
+            Refresh Tenants
+          </button>
+        </div>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_220px_auto]">
+          <input
+            value={newTenantName}
+            onChange={(event) => setNewTenantName(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Create tenant name"
+          />
+          <input
+            value={newTenantIndustry}
+            onChange={(event) => setNewTenantIndustry(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Industry"
+          />
+          <button
+            type="button"
+            onClick={() => void handleCreateTenant()}
+            disabled={loading}
+            className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200 disabled:opacity-60"
+          >
+            Create Tenant
+          </button>
+        </div>
       </div>
 
       <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
@@ -333,6 +486,11 @@ export function LegacyImportConsole() {
 
       {result ? (
         <div className="space-y-6">
+          <div className="rounded-xl border border-emerald-300/35 bg-emerald-300/10 p-3 text-sm text-emerald-100">
+            Saved snapshot to tenant{" "}
+            <span className="font-semibold">{result.tenantId ?? "default"}</span>{" "}
+            as run <span className="font-semibold">{result.runId ?? "n/a"}</span>.
+          </div>
           <div className="grid gap-3 md:grid-cols-3">
             <article className="rounded-xl border border-white/10 bg-slate-950/65 p-4">
               <p className="text-xs uppercase tracking-[0.14em] text-slate-400">

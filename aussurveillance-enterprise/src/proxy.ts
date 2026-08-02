@@ -12,7 +12,7 @@ function applySecurityHeaders(response: NextResponse, isApi: boolean) {
   }
 }
 
-export function middleware(request: NextRequest) {
+export function proxy(request: NextRequest) {
   const response = NextResponse.next();
   const isApi = request.nextUrl.pathname.startsWith("/api/");
   applySecurityHeaders(response, isApi);

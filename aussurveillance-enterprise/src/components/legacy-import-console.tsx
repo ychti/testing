@@ -69,18 +69,21 @@ export function LegacyImportConsole() {
   const [newTenantName, setNewTenantName] = useState<string>("");
   const [newTenantIndustry, setNewTenantIndustry] = useState<string>("security");
 
+  async function fetchTenantsData(): Promise<TenantRecord[]> {
+    const response = await fetch("/api/v1/tenants");
+    const payload = (await response.json()) as
+      | { tenants: TenantRecord[] }
+      | { error: string };
+    if (!response.ok || !("tenants" in payload)) {
+      return [];
+    }
+    return payload.tenants;
+  }
+
   async function loadTenants() {
     try {
-      const response = await fetch("/api/v1/tenants");
-      const payload = (await response.json()) as
-        | { tenants: TenantRecord[] }
-        | { error: string };
-      if (!response.ok || !("tenants" in payload)) {
-        return;
-      }
-      const fetched = payload.tenants;
+      const fetched = await fetchTenantsData();
       setTenants(fetched);
-
       const persisted =
         typeof window !== "undefined"
           ? window.localStorage.getItem("aus-intel-tenant-id")
@@ -89,8 +92,8 @@ export function LegacyImportConsole() {
         setSelectedTenantId(persisted);
         return;
       }
-      if (!selectedTenantId && fetched.length > 0) {
-        setSelectedTenantId(fetched[0].id);
+      if (fetched.length > 0) {
+        setSelectedTenantId((current) => current || fetched[0].id);
       }
     } catch {
       // Non-blocking for initial render.
@@ -98,7 +101,33 @@ export function LegacyImportConsole() {
   }
 
   useEffect(() => {
-    void loadTenants();
+    let cancelled = false;
+    async function bootstrapTenants() {
+      try {
+        const fetched = await fetchTenantsData();
+        if (cancelled) {
+          return;
+        }
+        setTenants(fetched);
+        const persisted =
+          typeof window !== "undefined"
+            ? window.localStorage.getItem("aus-intel-tenant-id")
+            : null;
+        if (persisted && fetched.some((tenant) => tenant.id === persisted)) {
+          setSelectedTenantId(persisted);
+          return;
+        }
+        if (fetched.length > 0) {
+          setSelectedTenantId((current) => current || fetched[0].id);
+        }
+      } catch {
+        // Silent bootstrap fallback.
+      }
+    }
+    void bootstrapTenants();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {

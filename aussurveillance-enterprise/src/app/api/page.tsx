@@ -74,6 +74,21 @@ export default function ApiDocsPage() {
           </pre>
         </article>
         <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            POST /api/v1/import/live-aus-surveillance
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            One-click pull from the live AUS Surveillance Firebase project using
+            anonymous auth, then converts to enterprise portfolio scoring.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/import/live-aus-surveillance \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"limit":10000}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
           <h2 className="text-lg font-semibold text-white">GET /api/v1/audit</h2>
           <p className="mt-2 text-sm text-slate-300">
             Returns recent request audit events for compliance and incident

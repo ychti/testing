@@ -41,6 +41,15 @@ curl -X POST http://localhost:3000/api/v1/import/firestore-markers \
   -d '{"limit":10000}'
 ```
 
+### One-click live pull (no file export)
+
+```bash
+curl -X POST http://localhost:3000/api/v1/import/live-aus-surveillance \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"limit":10000}'
+```
+
 ## 3) Validate conversion output
 
 The response includes:

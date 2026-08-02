@@ -166,6 +166,63 @@ export function LegacyImportConsole() {
     }
   };
 
+  const handleLivePublicImport = async () => {
+    setLoading(true);
+    setStatus("Pulling markers from live AUS Surveillance public data...");
+    try {
+      const response = await fetch("/api/v1/import/live-aus-surveillance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          limit: firestoreLimit,
+        }),
+      });
+
+      const payload = (await response.json()) as
+        | (ImportResult & {
+            fetch?: {
+              totalFetched: number;
+              normalizedMarkers: number;
+              invalidRows: number;
+            };
+          })
+        | { error: string };
+
+      if (!response.ok) {
+        setStatus(
+          "Live import failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        setResult(null);
+        return;
+      }
+
+      const parsed = payload as ImportResult & {
+        fetch?: {
+          totalFetched: number;
+          normalizedMarkers: number;
+          invalidRows: number;
+        };
+      };
+      setResult(parsed);
+      setMarkerCount(parsed.ingestion.markersReceived);
+      const extra =
+        parsed.fetch && parsed.fetch.totalFetched !== undefined
+          ? ` Pulled ${parsed.fetch.totalFetched} live rows.`
+          : "";
+      setStatus(`Live import complete.${extra}`);
+    } catch (error) {
+      setStatus(
+        `Live import failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <section className="space-y-6 rounded-2xl border border-white/10 bg-slate-900/65 p-6">
       <div className="space-y-2">
@@ -220,6 +277,24 @@ export function LegacyImportConsole() {
             Import Firestore
           </button>
         </div>
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-white">
+          One-click live import (no JSON file needed)
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Pulls marker data from the live AUS Surveillance Firebase project with
+          anonymous auth and runs enterprise scoring.
+        </p>
+        <button
+          type="button"
+          onClick={() => void handleLivePublicImport()}
+          disabled={loading}
+          className="mt-3 rounded-lg bg-emerald-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-200 disabled:opacity-60"
+        >
+          Import Live Data Now
+        </button>
       </div>
 
       {markerCount > 0 ? (

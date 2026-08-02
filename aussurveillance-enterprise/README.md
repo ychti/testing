@@ -24,6 +24,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - `GET /api/v1/site?siteId=<id>`
 - `POST /api/v1/import/legacy-markers`
 - `POST /api/v1/import/firestore-markers`
+- `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
 - `GET /api/v1/firestore/markers`
 - `GET /api/v1/audit`
 - `POST /api/v1/auth/login`
@@ -67,6 +68,8 @@ To connect real Firestore imports, set:
 - `FIREBASE_PROJECT_ID`
 
 Then use `/migration` and click **Import Firestore**.
+
+Easiest path: sign in at `/migration` and click **Import Live Data Now**.
 
 ## Quality Checks
 

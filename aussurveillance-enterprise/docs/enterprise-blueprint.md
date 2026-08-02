@@ -92,7 +92,23 @@ Recommended pricing stack:
 4. Scheduled alerting and workflow integrations
 5. Contract-ready compliance pack and SOC 2 roadmap
 
-## 10. Success Metrics
+## 10. Legacy App Migration Strategy
+
+The original app stores high-value marker semantics in Firestore (`quality`, `provenance`, `lifecycle`, and event telemetry). Preserve these while modernizing architecture.
+
+### Implemented migration path in this repo
+- Legacy quality logic ported in `src/lib/legacy-model.ts`
+- Transformation pipeline in `src/lib/legacy-migration.ts`
+- Preview ingestion endpoint: `POST /api/v1/import/legacy-markers`
+- Operator UI for upload and preview: `/migration`
+
+### Why daily full mapping is not required
+- Risk and confidence are decay-weighted over time.
+- High-exposure zones are prioritized for refresh.
+- Official/integrator feeds can continuously update critical regions.
+- Low-volatility regions can be refreshed less often while remaining decision-ready.
+
+## 11. Success Metrics
 
 - Portfolio risk score lift
 - Freshness score lift

@@ -14,12 +14,14 @@ This application demonstrates the transformation from a camera mapping concept i
 - **Methodology** (`/methodology`): explainable scoring model
 - **Trust** (`/trust`): governance and compliance controls
 - **API Docs** (`/api`): endpoint references and sample payloads
+- **Migration Console** (`/migration`): import legacy markers and preview enterprise scoring
 
 ## API Endpoints
 
 - `GET /api/v1/portfolio`
 - `GET /api/v1/sites`
 - `GET /api/v1/site?siteId=<id>`
+- `POST /api/v1/import/legacy-markers`
 
 ## Core Engine
 
@@ -28,6 +30,10 @@ The scoring engine lives in `src/lib/security-intelligence.ts` and includes:
 - freshness decay by volatility
 - coverage/blind-spot/lighting/maintenance model
 - portfolio exposure estimation and remediation recommendations
+
+Legacy compatibility modules:
+- `src/lib/legacy-model.ts` ports the original marker confidence/quality semantics
+- `src/lib/legacy-migration.ts` converts legacy markers to enterprise observations/sites
 
 ## Blueprint
 

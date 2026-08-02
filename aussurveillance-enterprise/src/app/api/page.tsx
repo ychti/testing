@@ -44,6 +44,20 @@ export default function ApiDocsPage() {
             </code>
           </pre>
         </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            POST /api/v1/import/legacy-markers
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Ingest legacy marker exports and generate enterprise portfolio risk
+            intelligence previews.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/import/legacy-markers \
+  -H "content-type: application/json" \
+  -d '{"markers":[{"lat":-33.87,"lng":151.21,"type":"cctv"}]}'`}</code>
+          </pre>
+        </article>
       </section>
 
       <section className="rounded-2xl border border-white/10 bg-slate-900/70 p-6">

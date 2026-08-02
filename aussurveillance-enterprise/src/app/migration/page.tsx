@@ -1,8 +1,10 @@
 import { LegacyImportConsole } from "@/components/legacy-import-console";
+import { OperatorAuthPanel } from "@/components/operator-auth-panel";
 
 const checklist = [
+  "Authenticate as an operator (session or scoped API key).",
   "Export markers from Firestore with id, coordinates, source, quality, lifecycle, and timestamps.",
-  "Run payload through /api/v1/import/legacy-markers for schema and quality validation.",
+  "Run payload through /api/v1/import/legacy-markers or pull directly with /api/v1/import/firestore-markers.",
   "Inspect generated site portfolio risk and identify degraded confidence/freshness zones.",
   "Promote accepted observations into tenant-scoped production collections.",
   "Enable scheduled refresh tasks and confidence decay recomputation jobs.",
@@ -36,6 +38,7 @@ export default function MigrationPage() {
         </ol>
       </section>
 
+      <OperatorAuthPanel />
       <LegacyImportConsole />
     </div>
   );

@@ -23,11 +23,23 @@ The import API accepts:
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/import/legacy-markers \
+  -H "authorization: Bearer <api-key>" \
   -H "content-type: application/json" \
   -d @markers-export.json
 ```
 
 Or use the web operator flow at `/migration`.
+
+### Direct Firestore pipeline
+
+If server credentials are configured, trigger server-side import:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/import/firestore-markers \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"limit":10000}'
+```
 
 ## 3) Validate conversion output
 

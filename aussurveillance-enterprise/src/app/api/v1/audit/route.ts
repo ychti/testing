@@ -4,55 +4,39 @@ import {
   authorizeRequest,
   type Scope,
 } from "@/lib/enterprise-auth";
-import { logAuditEvent } from "@/lib/audit-log";
-import { fetchPortfolioData } from "@/lib/portfolio-data";
+import { logAuditEvent, readRecentAuditEvents } from "@/lib/audit-log";
 
-const REQUIRED_SCOPES: Scope[] = ["sites:read"];
+const REQUIRED_SCOPES: Scope[] = ["audit:read"];
 
 export async function GET(request: Request) {
   try {
     const auth = authorizeRequest(request, REQUIRED_SCOPES);
     const url = new URL(request.url);
-    const sourceParam = url.searchParams.get("source");
-    const source = sourceParam === "firestore" ? "firestore" : "mock";
-    const limitRaw = Number(url.searchParams.get("limit") ?? 10_000);
+    const limitRaw = Number(url.searchParams.get("limit") ?? 100);
     const limit = Number.isFinite(limitRaw)
-      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50_000)
-      : 10_000;
-    const updatedAfter = url.searchParams.get("updatedAfter") ?? undefined;
-
-    const result = await fetchPortfolioData({
-      source,
-      limit,
-      updatedAfter,
-    });
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 500)
+      : 100;
+    const events = await readRecentAuditEvents(limit);
 
     await logAuditEvent({
-      action: "sites.read",
+      action: "audit.read",
       status: "success",
       actorId: auth.actorId,
       actorEmail: auth.actorEmail,
       tenant: auth.tenant,
       authMethod: auth.authMethod,
       request,
-      details: {
-        source,
-        limit,
-        updatedAfter: updatedAfter ?? null,
-      },
+      details: { limit, returned: events.length },
     });
 
     return NextResponse.json({
-      source: result.source,
-      warnings: result.warnings,
-      count: result.summary.sites.length,
-      ingestion: result.ingestion,
-      sites: result.summary.sites,
+      count: events.length,
+      events,
     });
   } catch (error) {
     if (error instanceof AuthError) {
       await logAuditEvent({
-        action: "sites.read",
+        action: "audit.read",
         status: "denied",
         actorId: "unauthorized",
         request,
@@ -62,20 +46,16 @@ export async function GET(request: Request) {
     }
 
     await logAuditEvent({
-      action: "sites.read",
+      action: "audit.read",
       status: "error",
       actorId: "system",
       request,
       details: { message: error instanceof Error ? error.message : "unknown" },
     });
     return NextResponse.json(
-      {
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to fetch sites.",
-      },
+      { error: "Failed to read audit events." },
       { status: 500 },
     );
   }
 }
+

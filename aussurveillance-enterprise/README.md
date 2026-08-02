@@ -15,6 +15,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - **Trust** (`/trust`): governance and compliance controls
 - **API Docs** (`/api`): endpoint references and sample payloads
 - **Migration Console** (`/migration`): import legacy markers and preview enterprise scoring
+- **Operations** (`/operations`): operator auth and audit monitoring
 
 ## API Endpoints
 
@@ -22,6 +23,12 @@ This application demonstrates the transformation from a camera mapping concept i
 - `GET /api/v1/sites`
 - `GET /api/v1/site?siteId=<id>`
 - `POST /api/v1/import/legacy-markers`
+- `POST /api/v1/import/firestore-markers`
+- `GET /api/v1/firestore/markers`
+- `GET /api/v1/audit`
+- `POST /api/v1/auth/login`
+- `POST /api/v1/auth/logout`
+- `GET /api/v1/auth/me`
 
 ## Core Engine
 
@@ -45,10 +52,21 @@ A complete business and product architecture guide is included at:
 
 ```bash
 npm install
+cp .env.example .env.local
 npm run dev
 ```
 
 Then open `http://localhost:3000`.
+
+Default local operator login (change in `.env.local`):
+- email: `admin@aussurveillance.local`
+- password: `changeme-admin`
+
+To connect real Firestore imports, set:
+- `FIREBASE_SERVICE_ACCOUNT_JSON` (or base64 variant)
+- `FIREBASE_PROJECT_ID`
+
+Then use `/migration` and click **Import Firestore**.
 
 ## Quality Checks
 

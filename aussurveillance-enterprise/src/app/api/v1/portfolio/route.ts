@@ -1,6 +1,75 @@
 import { NextResponse } from "next/server";
-import { getPortfolioSummary } from "@/lib/security-intelligence";
+import {
+  AuthError,
+  authorizeRequest,
+  type Scope,
+} from "@/lib/enterprise-auth";
+import { logAuditEvent } from "@/lib/audit-log";
+import { fetchPortfolioData } from "@/lib/portfolio-data";
 
-export async function GET() {
-  return NextResponse.json(getPortfolioSummary());
+const REQUIRED_SCOPES: Scope[] = ["portfolio:read"];
+
+export async function GET(request: Request) {
+  try {
+    const auth = authorizeRequest(request, REQUIRED_SCOPES);
+    const url = new URL(request.url);
+    const sourceParam = url.searchParams.get("source");
+    const source = sourceParam === "firestore" ? "firestore" : "mock";
+    const limitRaw = Number(url.searchParams.get("limit") ?? 10_000);
+    const limit = Number.isFinite(limitRaw)
+      ? Math.min(Math.max(Math.floor(limitRaw), 1), 50_000)
+      : 10_000;
+    const updatedAfter = url.searchParams.get("updatedAfter") ?? undefined;
+
+    const result = await fetchPortfolioData({
+      source,
+      limit,
+      updatedAfter,
+    });
+
+    await logAuditEvent({
+      action: "portfolio.read",
+      status: "success",
+      actorId: auth.actorId,
+      actorEmail: auth.actorEmail,
+      tenant: auth.tenant,
+      authMethod: auth.authMethod,
+      request,
+      details: {
+        source,
+        limit,
+        updatedAfter: updatedAfter ?? null,
+      },
+    });
+
+    return NextResponse.json(result);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      await logAuditEvent({
+        action: "portfolio.read",
+        status: "denied",
+        actorId: "unauthorized",
+        request,
+        details: { reason: error.message },
+      });
+      return NextResponse.json({ error: error.message }, { status: error.status });
+    }
+
+    await logAuditEvent({
+      action: "portfolio.read",
+      status: "error",
+      actorId: "system",
+      request,
+      details: { message: error instanceof Error ? error.message : "unknown" },
+    });
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "Failed to fetch portfolio summary.",
+      },
+      { status: 500 },
+    );
+  }
 }

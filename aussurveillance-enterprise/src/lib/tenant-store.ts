@@ -79,6 +79,10 @@ export interface ReviewCandidateRecord {
   reviewedAt?: string;
   reviewedBy?: string;
   reviewerNote?: string;
+  reviewedLocation?: {
+    lat: number;
+    lng: number;
+  };
   exportedAt?: string;
 }
 
@@ -441,6 +445,8 @@ export async function decideReviewCandidate(input: {
   decision: "approve" | "reject";
   reviewerId: string;
   reviewerNote?: string;
+  verifiedLat?: number;
+  verifiedLng?: number;
 }): Promise<ReviewCandidateRecord> {
   return withStoreWrite((store) => {
     ensureDefaultTenantInStore(store);
@@ -454,6 +460,22 @@ export async function decideReviewCandidate(input: {
     candidate.reviewedAt = nowIso();
     candidate.reviewedBy = input.reviewerId;
     candidate.reviewerNote = input.reviewerNote?.trim() || undefined;
+    if (
+      Number.isFinite(input.verifiedLat) &&
+      Number.isFinite(input.verifiedLng) &&
+      Math.abs(Number(input.verifiedLat)) <= 90 &&
+      Math.abs(Number(input.verifiedLng)) <= 180
+    ) {
+      candidate.marker = {
+        ...candidate.marker,
+        lat: Number(input.verifiedLat),
+        lng: Number(input.verifiedLng),
+      };
+      candidate.reviewedLocation = {
+        lat: Number(input.verifiedLat),
+        lng: Number(input.verifiedLng),
+      };
+    }
     if (candidate.status !== "approved") {
       candidate.exportedAt = undefined;
     }

@@ -68,6 +68,8 @@ export function ReviewQueueConsole() {
   const [loading, setLoading] = useState(false);
   const [reviewerNote, setReviewerNote] = useState("");
   const [sourceLabel, setSourceLabel] = useState("google-surveillance-batch");
+  const [verifiedLat, setVerifiedLat] = useState("");
+  const [verifiedLng, setVerifiedLng] = useState("");
   const [candidate, setCandidate] = useState<ReviewCandidate | null>(null);
   const [stats, setStats] = useState<QueueStats>({
     pending: 0,
@@ -118,6 +120,12 @@ export function ReviewQueueConsole() {
       throw new Error(("error" in payload && payload.error) || "Queue fetch failed.");
     }
     setCandidate(payload.candidate);
+    setVerifiedLat(
+      payload.candidate ? String(payload.candidate.marker.lat ?? "") : "",
+    );
+    setVerifiedLng(
+      payload.candidate ? String(payload.candidate.marker.lng ?? "") : "",
+    );
     setStats(payload.stats);
   }
 
@@ -230,6 +238,8 @@ export function ReviewQueueConsole() {
     }
     setLoading(true);
     try {
+      const parsedLat = Number(verifiedLat);
+      const parsedLng = Number(verifiedLng);
       const response = await fetch("/api/v1/review-candidates", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -238,6 +248,8 @@ export function ReviewQueueConsole() {
           candidateId: candidate.id,
           decision,
           reviewerNote: reviewerNote.trim() || undefined,
+          verifiedLat: Number.isFinite(parsedLat) ? parsedLat : undefined,
+          verifiedLng: Number.isFinite(parsedLng) ? parsedLng : undefined,
         }),
       });
       const body = (await response.json()) as
@@ -459,6 +471,29 @@ export function ReviewQueueConsole() {
                   {candidate.marker.id ?? candidate.id}
                 </span>
               </p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2">
+              <label className="space-y-1 text-sm text-slate-300">
+                Verified latitude
+                <input
+                  type="number"
+                  step="0.000001"
+                  value={verifiedLat}
+                  onChange={(event) => setVerifiedLat(event.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                />
+              </label>
+              <label className="space-y-1 text-sm text-slate-300">
+                Verified longitude
+                <input
+                  type="number"
+                  step="0.000001"
+                  value={verifiedLng}
+                  onChange={(event) => setVerifiedLng(event.target.value)}
+                  className="w-full rounded-lg border border-white/10 bg-slate-900 px-3 py-2 text-sm text-white"
+                />
+              </label>
             </div>
 
             <label className="block space-y-2 text-sm text-slate-300">

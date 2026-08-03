@@ -33,6 +33,8 @@ interface QueuePayload {
   candidateId?: unknown;
   decision?: unknown;
   reviewerNote?: unknown;
+  verifiedLat?: unknown;
+  verifiedLng?: unknown;
 }
 
 function allowPublicRead(): boolean {
@@ -308,6 +310,10 @@ export async function PATCH(request: Request) {
       reviewerId: auth.actorId,
       reviewerNote:
         typeof payload.reviewerNote === "string" ? payload.reviewerNote : undefined,
+      verifiedLat:
+        typeof payload.verifiedLat === "number" ? payload.verifiedLat : undefined,
+      verifiedLng:
+        typeof payload.verifiedLng === "number" ? payload.verifiedLng : undefined,
     });
     const [stats, next] = await Promise.all([
       getReviewQueueStats(tenantId),

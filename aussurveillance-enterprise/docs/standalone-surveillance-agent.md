@@ -34,6 +34,23 @@ npm run surveillance:agent -- --assets ./assets.csv --batch-count 6 --plan-only
 
 Each batch can be assigned to one worker agent.
 
+## 2.5) Run API doctor first (recommended)
+
+This gives a clear pass/fail report for key validity, Street View access, Vision access, and sample asset coverage.
+
+```bash
+# You can use one shared key for both APIs:
+export GOOGLE_API_KEY="YOUR_REAL_KEY"
+
+npm run surveillance:doctor -- \
+  --assets ./assets.csv \
+  --sample-assets 6 \
+  --radius-meters 300
+```
+
+If doctor returns `REQUEST_DENIED`, the key/project setup is wrong.
+If doctor returns `ZERO_RESULTS`, your key is likely valid but that location has no Street View imagery.
+
 ## 3) Run one worker batch
 
 ```bash
@@ -46,6 +63,12 @@ npm run surveillance:agent -- \
   --radius-meters 120 \
   --threshold 0.72 \
   --out ./surveillance-batch-2.json
+```
+
+If you use one shared key, this is also valid:
+
+```bash
+GOOGLE_API_KEY=... npm run surveillance:agent -- --assets ./assets.csv --batch-count 6 --batch-index 2 --out ./surveillance-batch-2.json
 ```
 
 Before running, verify your keys are real values (not placeholders) and that these Google APIs are enabled on the same project:

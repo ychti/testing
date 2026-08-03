@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "surveillance:agent": "node tools/google-surveillance-agent.mjs",
-    "surveillance:merge": "node tools/merge-surveillance-batches.mjs"
+    "surveillance:merge": "node tools/merge-surveillance-batches.mjs",
+    "surveillance:doctor": "node tools/google-surveillance-doctor.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.2.0",

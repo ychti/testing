@@ -117,6 +117,9 @@ The Google mapping agent is intentionally kept out of the website UI. Run it as 
 # Create per-agent batch plans from your asset CSV
 npm run surveillance:agent -- --assets ./assets.csv --batch-count 6 --plan-only
 
+# Validate key/project setup before long runs
+GOOGLE_API_KEY=... npm run surveillance:doctor -- --assets ./assets.csv --sample-assets 6 --radius-meters 300
+
 # Run one specific worker batch (example: agent 2 of 6)
 GOOGLE_MAPS_API_KEY=... GOOGLE_VISION_API_KEY=... \
 npm run surveillance:agent -- \
@@ -133,6 +136,7 @@ npm run surveillance:merge -- --out ./surveillance-merged.json ./surveillance-ba
 ```
 
 `--plan-only` does not require Google API keys; collection runs do.
+You can use one shared key (`GOOGLE_API_KEY`) for both Maps + Vision.
 
 Then upload merged/single batch JSON files through `/migration` legacy marker upload.
 

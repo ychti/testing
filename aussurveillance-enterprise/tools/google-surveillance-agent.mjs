@@ -25,8 +25,9 @@ Options:
   --plan-only                     Print batch assignment plan only and exit
 
 Environment:
-  GOOGLE_MAPS_API_KEY             Required
-  GOOGLE_VISION_API_KEY           Optional but strongly recommended
+  GOOGLE_API_KEY                  Optional shared key for both Maps + Vision
+  GOOGLE_MAPS_API_KEY             Required unless GOOGLE_API_KEY is set
+  GOOGLE_VISION_API_KEY           Optional (falls back to GOOGLE_API_KEY)
 `;
 }
 
@@ -327,19 +328,20 @@ async function main() {
     return;
   }
 
-  const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
+  const sharedApiKey = process.env.GOOGLE_API_KEY?.trim() || "";
+  const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim() || sharedApiKey;
   if (!mapsApiKey) {
-    throw new Error("GOOGLE_MAPS_API_KEY is required.");
+    throw new Error("Set GOOGLE_MAPS_API_KEY or GOOGLE_API_KEY before running.");
   }
   if (looksLikePlaceholder(mapsApiKey)) {
     throw new Error(
-      "GOOGLE_MAPS_API_KEY looks like a placeholder value. Set a real Google API key.",
+      "Google Maps API key looks like a placeholder value. Set a real Google API key.",
     );
   }
-  const visionApiKey = process.env.GOOGLE_VISION_API_KEY?.trim() || "";
+  const visionApiKey = process.env.GOOGLE_VISION_API_KEY?.trim() || sharedApiKey;
   if (visionApiKey && looksLikePlaceholder(visionApiKey)) {
     throw new Error(
-      "GOOGLE_VISION_API_KEY looks like a placeholder value. Set a real Google Vision key or unset it.",
+      "Google Vision API key looks like a placeholder value. Set a real key or unset it.",
     );
   }
 

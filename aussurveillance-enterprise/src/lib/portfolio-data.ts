@@ -1,7 +1,11 @@
 import { fetchFirestoreMarkers } from "@/lib/firestore-markers";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
 import { getPortfolioSummary } from "@/lib/security-intelligence";
-import { getLatestImportRun } from "@/lib/tenant-store";
+import {
+  getLatestImportRun,
+  listTenantAssets,
+  resolveTenantId,
+} from "@/lib/tenant-store";
 import type { PortfolioSummary } from "@/lib/scoring-engine";
 
 interface SourceOptions {
@@ -64,7 +68,13 @@ export async function fetchPortfolioData({
   }
 
   const fetched = await fetchFirestoreMarkers({ limit, updatedAfter });
-  const migration = migrateLegacyMarkersToPortfolio(fetched.markers);
+  const resolvedTenantId = tenantId ? await resolveTenantId(tenantId) : undefined;
+  const tenantAssets = resolvedTenantId
+    ? await listTenantAssets(resolvedTenantId)
+    : [];
+  const migration = migrateLegacyMarkersToPortfolio(fetched.markers, {
+    assets: tenantAssets,
+  });
   const warnings = [...migration.warnings];
   if (fetched.invalidRows > 0) {
     warnings.push(
@@ -77,7 +87,7 @@ export async function fetchPortfolioData({
     source: "firestore",
     ingestion: migration.ingestion,
     warnings,
-    tenantId,
+    tenantId: resolvedTenantId,
   };
 }
 

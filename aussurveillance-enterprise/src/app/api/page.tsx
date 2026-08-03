@@ -91,6 +91,45 @@ export default function ApiDocsPage() {
           </pre>
         </article>
         <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">GET/POST /api/v1/assets</h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Store and retrieve tenant asset registries (real named customer sites)
+            used to map markers to insurer-facing underwriting entities.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/assets \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"tenant-123","csv":"name,address,lat,lng\\nHQ,123 Example St,-33.86,151.21"}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            POST /api/v1/import/official-state-feeds
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Pulls verified multi-state importer feeds (NSW, QLD, VIC, SA, WA, ACT),
+            then scores and persists the portfolio snapshot to the selected tenant.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/import/official-state-feeds \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"tenant-123","states":["NSW","VIC","ACT"]}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            GET /api/v1/reports/executive
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Exports a markdown executive report with underwriting mix, top risk
+            sites, and recommended controls.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -s "https://your-domain.com/api/v1/reports/executive?tenantId=tenant-123&format=markdown"`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
           <h2 className="text-lg font-semibold text-white">GET /api/v1/audit</h2>
           <p className="mt-2 text-sm text-slate-300">
             Returns recent request audit events for compliance and incident

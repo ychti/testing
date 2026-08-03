@@ -28,6 +28,10 @@ This application demonstrates the transformation from a camera mapping concept i
 - `POST /api/v1/import/legacy-markers`
 - `POST /api/v1/import/firestore-markers`
 - `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
+- `POST /api/v1/import/official-state-feeds` (NSW/QLD/VIC/SA/WA/ACT)
+- `GET /api/v1/assets?tenantId=<id>`
+- `POST /api/v1/assets`
+- `GET /api/v1/reports/executive?tenantId=<id>&format=markdown`
 - `GET /api/v1/firestore/markers`
 - `GET /api/v1/imports/history?tenantId=<id>`
 - `GET /api/v1/tenants`
@@ -40,7 +44,10 @@ This application demonstrates the transformation from a camera mapping concept i
 ## Enterprise Features
 
 - tenant persistence for every import run
+- tenant asset registry (real named sites + addresses)
 - historical trend snapshots (risk/confidence/freshness/exposure deltas)
+- underwriting decision mix (approve/conditional/refer/decline)
+- exportable executive report generation
 - workspace-scoped import history
 - audited API actions
 - rate limiting on high-cost endpoints
@@ -48,15 +55,17 @@ This application demonstrates the transformation from a camera mapping concept i
 
 ## Core Engine
 
-The scoring engine lives in `src/lib/security-intelligence.ts` and includes:
+The production scoring engine lives in `src/lib/scoring-engine.ts` and includes:
 - source-aware trust weighting
 - freshness decay by volatility
 - coverage/blind-spot/lighting/maintenance model
-- portfolio exposure estimation and remediation recommendations
+- calibrated exposure estimation and remediation recommendations
+- underwriting decision outputs with required controls
 
-Legacy compatibility modules:
+Legacy compatibility and ingestion modules:
 - `src/lib/legacy-model.ts` ports the original marker confidence/quality semantics
-- `src/lib/legacy-migration.ts` converts legacy markers to enterprise observations/sites
+- `src/lib/legacy-migration.ts` converts legacy markers to enterprise observations/sites and asset-maps to tenant registry
+- `src/lib/official-state-feeds.ts` pulls verified multi-state importer feeds
 
 ## Blueprint
 

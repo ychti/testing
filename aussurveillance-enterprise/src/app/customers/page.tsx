@@ -12,7 +12,8 @@ export default function CustomersPage() {
         </h1>
         <p className="max-w-3xl text-slate-300">
           Analyze each customer workspace independently, inspect historical imports,
-          and monitor how risk posture changes over time for executive reporting.
+          monitor how risk posture changes over time, run underwriting decision
+          panels, and export executive-ready reports.
         </p>
       </section>
       <CustomerIntelligenceConsole />

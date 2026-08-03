@@ -11,7 +11,11 @@ import {
   type LegacyMarker,
 } from "@/lib/legacy-model";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
-import { saveImportRun } from "@/lib/tenant-store";
+import {
+  listTenantAssets,
+  resolveTenantId,
+  saveImportRun,
+} from "@/lib/tenant-store";
 
 interface ImportPayload {
   markers?: unknown;
@@ -64,9 +68,11 @@ export async function POST(request: Request) {
     }
 
     const filtered = payload.markers.filter(isValidLegacyMarker) as LegacyMarker[];
-    const result = migrateLegacyMarkersToPortfolio(filtered);
-    const tenantId =
-      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined;
+    const tenantId = await resolveTenantId(
+      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined,
+    );
+    const assets = await listTenantAssets(tenantId);
+    const result = migrateLegacyMarkersToPortfolio(filtered, { assets });
     const run = await saveImportRun({
       tenantId,
       source: "legacy-file",

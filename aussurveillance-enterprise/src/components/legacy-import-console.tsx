@@ -36,11 +36,21 @@ interface ImportResult {
   tenantId?: string;
   runId?: string;
   importedAt?: string;
+  feedStatus?: Array<{
+    state: string;
+    status: "ok" | "error";
+    markerCount: number;
+    error?: string;
+  }>;
   coverage?: {
     totalMarkersAfterNormalization: number;
     duplicateMarkersCollapsed: number;
     representedStateCount: number;
     nationalCoverageScore: number;
+    assetsProvided?: number;
+    markersMatchedToAssets?: number;
+    unmatchedMarkers?: number;
+    generatedAssetSites?: number;
     byState: Array<{
       state: string;
       markerCount: number;
@@ -48,6 +58,17 @@ interface ImportResult {
       avgConfidence: number;
     }>;
   };
+}
+
+interface AssetRecord {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  region?: string;
+  segment?: string;
+  insuredValueAud?: number;
 }
 
 function extractMarkers(payload: unknown): unknown[] {
@@ -80,6 +101,13 @@ export function LegacyImportConsole() {
   const [selectedTenantId, setSelectedTenantId] = useState<string>("");
   const [newTenantName, setNewTenantName] = useState<string>("");
   const [newTenantIndustry, setNewTenantIndustry] = useState<string>("security");
+  const [assetsCsv, setAssetsCsv] = useState<string>(
+    "name,address,lat,lng,region,segment,insuredValueAud\n",
+  );
+  const [assets, setAssets] = useState<AssetRecord[]>([]);
+  const [stateFeedList, setStateFeedList] = useState<string>(
+    "NSW,QLD,VIC,SA,WA,ACT",
+  );
 
   async function fetchTenantsData(): Promise<TenantRecord[]> {
     const response = await fetch("/api/v1/tenants");
@@ -109,6 +137,28 @@ export function LegacyImportConsole() {
       }
     } catch {
       // Non-blocking for initial render.
+    }
+  }
+
+  async function loadAssets(tenantId: string) {
+    if (!tenantId) {
+      setAssets([]);
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/assets?tenantId=${encodeURIComponent(tenantId)}`,
+      );
+      const payload = (await response.json()) as
+        | { assets: AssetRecord[] }
+        | { error: string };
+      if (!response.ok || !("assets" in payload)) {
+        setAssets([]);
+        return;
+      }
+      setAssets(payload.assets);
+    } catch {
+      setAssets([]);
     }
   }
 
@@ -149,6 +199,7 @@ export function LegacyImportConsole() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
     }
+    void loadAssets(selectedTenantId);
   }, [selectedTenantId]);
 
   async function handleCreateTenant() {
@@ -190,6 +241,95 @@ export function LegacyImportConsole() {
       setLoading(false);
     }
   }
+
+  async function handleAssetImport() {
+    if (!selectedTenantId) {
+      setStatus("Select a tenant before importing asset registry.");
+      return;
+    }
+    if (assetsCsv.trim().length === 0) {
+      setStatus("Asset CSV cannot be empty.");
+      return;
+    }
+    setLoading(true);
+    setStatus("Uploading tenant asset registry...");
+    try {
+      const response = await fetch("/api/v1/assets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: selectedTenantId,
+          csv: assetsCsv,
+        }),
+      });
+      const payload = (await response.json()) as
+        | { count: number; assets: AssetRecord[] }
+        | { error: string };
+      if (!response.ok || !("assets" in payload)) {
+        setStatus(
+          "Asset import failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        return;
+      }
+      setAssets(payload.assets);
+      setStatus(`Asset registry imported (${payload.count} sites).`);
+    } catch (error) {
+      setStatus(
+        `Asset import failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const handleOfficialFeedImport = async () => {
+    if (!selectedTenantId) {
+      setStatus("Select a tenant before pulling official state feeds.");
+      return;
+    }
+    setLoading(true);
+    setStatus("Pulling official state feeds and scoring...");
+    try {
+      const states = stateFeedList
+        .split(",")
+        .map((state) => state.trim().toUpperCase())
+        .filter((state) => state.length > 0);
+      const response = await fetch("/api/v1/import/official-state-feeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: selectedTenantId,
+          states,
+          assetMatchRadiusKm: 1.2,
+        }),
+      });
+      const payload = (await response.json()) as ImportResult | { error: string };
+      if (!response.ok) {
+        setStatus(
+          "Official feed import failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        setResult(null);
+        return;
+      }
+      const parsed = payload as ImportResult;
+      setResult(parsed);
+      setMarkerCount(parsed.ingestion.markersReceived);
+      setStatus("Official state feeds imported and portfolio re-scored.");
+    } catch (error) {
+      setStatus(
+        `Official feed import failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const highestRiskSites = useMemo(() => {
     if (!result) {
@@ -437,6 +577,61 @@ export function LegacyImportConsole() {
       </div>
 
       <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-white">
+          Asset registry (real customer site names)
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Upload insured locations so outputs show named assets and addresses instead of
+          anonymous grid cells.
+        </p>
+        <textarea
+          value={assetsCsv}
+          onChange={(event) => setAssetsCsv(event.target.value)}
+          rows={7}
+          className="mt-3 w-full rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-xs text-slate-200"
+          placeholder="name,address,lat,lng,region,segment,insuredValueAud"
+        />
+        <div className="mt-3 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void handleAssetImport()}
+            disabled={loading}
+            className="rounded-lg bg-fuchsia-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-fuchsia-200 disabled:opacity-60"
+          >
+            Import Asset Registry
+          </button>
+          <span className="text-xs text-slate-400">
+            Active assets for tenant:{" "}
+            <span className="font-semibold text-white">{assets.length}</span>
+          </span>
+        </div>
+        {assets.length > 0 ? (
+          <div className="mt-3 overflow-auto rounded-lg border border-white/10">
+            <table className="min-w-full text-left text-xs text-slate-200">
+              <thead className="bg-slate-900/75 uppercase tracking-[0.14em] text-slate-400">
+                <tr>
+                  <th className="px-3 py-2">Name</th>
+                  <th className="px-3 py-2">Address</th>
+                  <th className="px-3 py-2">Region</th>
+                  <th className="px-3 py-2">Segment</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/10">
+                {assets.slice(0, 8).map((asset) => (
+                  <tr key={asset.id}>
+                    <td className="px-3 py-2 font-semibold text-white">{asset.name}</td>
+                    <td className="px-3 py-2">{asset.address}</td>
+                    <td className="px-3 py-2">{asset.region ?? "auto"}</td>
+                    <td className="px-3 py-2">{asset.segment ?? "auto"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
         <input
           type="file"
           accept=".json,application/json"
@@ -518,9 +713,36 @@ export function LegacyImportConsole() {
         </button>
       </div>
 
+      <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-white">
+          Official multi-state ingestion (verified source pull)
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Pulls markers from state importer sources (NSW, QLD, VIC, SA, WA, ACT) and
+          maps them to your uploaded asset registry.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-[1fr_auto]">
+          <input
+            type="text"
+            value={stateFeedList}
+            onChange={(event) => setStateFeedList(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="NSW,QLD,VIC,SA,WA,ACT"
+          />
+          <button
+            type="button"
+            onClick={() => void handleOfficialFeedImport()}
+            disabled={loading}
+            className="rounded-lg bg-amber-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-amber-200 disabled:opacity-60"
+          >
+            Import Official Feeds
+          </button>
+        </div>
+      </div>
+
       {markerCount > 0 ? (
         <p className="text-sm text-slate-300">
-          Markers parsed from file:{" "}
+          Markers processed in latest ingest:{" "}
           <span className="font-semibold text-white">{markerCount}</span>
         </p>
       ) : null}
@@ -601,6 +823,18 @@ export function LegacyImportConsole() {
                     {result.coverage.duplicateMarkersCollapsed}
                   </span>
                 </p>
+                <p>
+                  Asset-matched markers:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.markersMatchedToAssets ?? 0}
+                  </span>
+                </p>
+                <p>
+                  Named asset sites generated:{" "}
+                  <span className="font-semibold text-white">
+                    {result.coverage.generatedAssetSites ?? 0}
+                  </span>
+                </p>
               </div>
               <div className="mt-4 overflow-auto rounded-lg border border-white/10">
                 <table className="min-w-full text-left text-xs">
@@ -619,6 +853,36 @@ export function LegacyImportConsole() {
                         <td className="px-3 py-2">{row.markerCount}</td>
                         <td className="px-3 py-2">{row.siteCount}</td>
                         <td className="px-3 py-2">{row.avgConfidence}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
+          {result.feedStatus && result.feedStatus.length > 0 ? (
+            <div className="rounded-xl border border-white/10 bg-slate-950/65 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-300">
+                Official feed verification
+              </h3>
+              <div className="mt-3 overflow-auto rounded-lg border border-white/10">
+                <table className="min-w-full text-left text-xs text-slate-200">
+                  <thead className="bg-slate-900/75 uppercase tracking-[0.14em] text-slate-400">
+                    <tr>
+                      <th className="px-3 py-2">State</th>
+                      <th className="px-3 py-2">Status</th>
+                      <th className="px-3 py-2">Markers</th>
+                      <th className="px-3 py-2">Error</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/10">
+                    {result.feedStatus.map((item) => (
+                      <tr key={item.state}>
+                        <td className="px-3 py-2 font-semibold text-white">{item.state}</td>
+                        <td className="px-3 py-2">{item.status}</td>
+                        <td className="px-3 py-2">{item.markerCount}</td>
+                        <td className="px-3 py-2">{item.error ?? "-"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -654,6 +918,11 @@ export function LegacyImportConsole() {
                     <p className="font-semibold text-rose-200">Risk {site.riskScore}</p>
                     <p className="text-xs text-slate-400">
                       {formatCurrencyAud(site.estimatedMonthlyExposureAud)} exposure
+                    </p>
+                    <p className="text-xs text-slate-400">
+                      UW {site.underwriting?.decision ?? "refer"} (
+                      {(site.underwriting?.premiumAdjustmentPct ?? 0) >= 0 ? "+" : ""}
+                      {site.underwriting?.premiumAdjustmentPct ?? 0}%)
                     </p>
                   </div>
                 </div>

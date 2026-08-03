@@ -24,6 +24,12 @@ interface LatestSnapshot {
     estimatedMonthlyExposureAud: number;
     atRiskSites: number;
     totalSites: number;
+    underwriting?: {
+      approve: number;
+      conditional: number;
+      refer: number;
+      decline: number;
+    };
     sites: SiteScore[];
   };
 }
@@ -130,6 +136,40 @@ export function CustomerIntelligenceConsole() {
     }
   }
 
+  async function downloadExecutiveReport() {
+    if (!selectedTenantId) {
+      setStatus("Select a tenant before exporting reports.");
+      return;
+    }
+    try {
+      const response = await fetch(
+        `/api/v1/reports/executive?tenantId=${encodeURIComponent(selectedTenantId)}&format=markdown`,
+      );
+      if (!response.ok) {
+        const payload = (await response.json()) as { error?: string };
+        setStatus(payload.error ?? "Failed to generate report.");
+        return;
+      }
+      const markdown = await response.text();
+      const blob = new Blob([markdown], { type: "text/markdown;charset=utf-8" });
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `${selectedTenantId}-executive-report.md`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setStatus("Executive report downloaded.");
+    } catch (error) {
+      setStatus(
+        error instanceof Error
+          ? error.message
+          : "Failed to export executive report.",
+      );
+    }
+  }
+
   useEffect(() => {
     let mounted = true;
     async function bootstrap() {
@@ -181,6 +221,13 @@ export function CustomerIntelligenceConsole() {
       exposureDelta: last.exposureAud - first.exposureAud,
     };
   }, [trend]);
+
+  const underwritingSummary = latest?.summary.underwriting ?? {
+    approve: 0,
+    conditional: 0,
+    refer: 0,
+    decline: 0,
+  };
 
   return (
     <div className="space-y-8">
@@ -296,7 +343,16 @@ export function CustomerIntelligenceConsole() {
           </section>
 
           <section className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
-            <h3 className="text-lg font-semibold text-white">Import run history</h3>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-lg font-semibold text-white">Import run history</h3>
+              <button
+                type="button"
+                onClick={() => void downloadExecutiveReport()}
+                className="rounded-lg bg-cyan-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-200"
+              >
+                Export Executive Report (.md)
+              </button>
+            </div>
             <div className="mt-3 overflow-auto">
               <table className="min-w-full text-left text-sm">
                 <thead className="text-xs uppercase tracking-[0.15em] text-slate-400">
@@ -323,6 +379,32 @@ export function CustomerIntelligenceConsole() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+            <h3 className="text-lg font-semibold text-white">Underwriting decision panel</h3>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <MetricCard
+                label="Approve"
+                value={String(underwritingSummary.approve)}
+                detail="Standard policy terms."
+              />
+              <MetricCard
+                label="Conditional"
+                value={String(underwritingSummary.conditional)}
+                detail="Coverage with controls required."
+              />
+              <MetricCard
+                label="Refer"
+                value={String(underwritingSummary.refer)}
+                detail="Escalate for engineering review."
+              />
+              <MetricCard
+                label="Decline"
+                value={String(underwritingSummary.decline)}
+                detail="Risk posture below threshold."
+              />
             </div>
           </section>
         </>

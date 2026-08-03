@@ -8,7 +8,11 @@ import {
 import { logAuditEvent } from "@/lib/audit-log";
 import { fetchLivePublicMarkers } from "@/lib/live-aus-surveillance";
 import { migrateLegacyMarkersToPortfolio } from "@/lib/legacy-migration";
-import { saveImportRun } from "@/lib/tenant-store";
+import {
+  listTenantAssets,
+  resolveTenantId,
+  saveImportRun,
+} from "@/lib/tenant-store";
 import { enforceRateLimit, RateLimitError } from "@/lib/rate-limit";
 
 const REQUIRED_SCOPES: Scope[] = ["legacy:import"];
@@ -73,15 +77,17 @@ export async function POST(request: Request) {
       typeof payload.firebasePassword === "string"
         ? payload.firebasePassword
         : undefined;
-    const tenantId =
-      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined;
+    const tenantId = await resolveTenantId(
+      typeof payload.tenantId === "string" ? payload.tenantId.trim() : undefined,
+    );
 
     const fetched = await fetchLivePublicMarkers({
       limit,
       firebaseEmail,
       firebasePassword,
     });
-    const migrated = migrateLegacyMarkersToPortfolio(fetched.markers);
+    const assets = await listTenantAssets(tenantId);
+    const migrated = migrateLegacyMarkersToPortfolio(fetched.markers, { assets });
     if (fetched.invalidRows > 0) {
       migrated.warnings.push(
         `${fetched.invalidRows} public Firestore rows could not be normalized and were skipped.`,

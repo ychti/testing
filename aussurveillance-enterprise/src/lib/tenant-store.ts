@@ -16,7 +16,11 @@ export interface TenantRecord {
 export interface ImportRunRecord {
   id: string;
   tenantId: string;
-  source: "legacy-file" | "firestore-admin" | "live-public";
+  source:
+    | "legacy-file"
+    | "firestore-admin"
+    | "live-public"
+    | "official-state-feeds";
   authMode?: string;
   actorId: string;
   createdAt: string;
@@ -33,6 +37,10 @@ export interface ImportRunRecord {
     duplicateMarkersCollapsed: number;
     representedStateCount: number;
     nationalCoverageScore: number;
+    assetsProvided?: number;
+    markersMatchedToAssets?: number;
+    unmatchedMarkers?: number;
+    generatedAssetSites?: number;
     byState: Array<{
       state: string;
       markerCount: number;
@@ -43,10 +51,25 @@ export interface ImportRunRecord {
   summary: PortfolioSummary;
 }
 
+export interface AssetRecord {
+  id: string;
+  tenantId: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  region?: string;
+  segment?: "retail" | "healthcare" | "logistics" | "education";
+  insuredValueAud?: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
 interface TenantStore {
   schemaVersion: number;
   tenants: TenantRecord[];
   importRuns: ImportRunRecord[];
+  assets: AssetRecord[];
 }
 
 const DEFAULT_TENANT_ID = "tenant-default";
@@ -62,9 +85,10 @@ function tenantStorePath(): string {
 
 function emptyStore(): TenantStore {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     tenants: [],
     importRuns: [],
+    assets: [],
   };
 }
 
@@ -80,6 +104,9 @@ async function readStore(): Promise<TenantStore> {
       !Array.isArray(parsed.importRuns)
     ) {
       return emptyStore();
+    }
+    if (!Array.isArray(parsed.assets)) {
+      (parsed as TenantStore).assets = [];
     }
     return parsed;
   } catch {
@@ -164,6 +191,75 @@ export async function createTenant(input: {
     };
     store.tenants.push(tenant);
     return tenant;
+  });
+}
+
+export async function resolveTenantId(tenantId?: string): Promise<string> {
+  return withStoreWrite((store) => {
+    const defaultTenant = ensureDefaultTenantInStore(store);
+    if (!tenantId) {
+      return defaultTenant.id;
+    }
+    const exists = store.tenants.some((tenant) => tenant.id === tenantId);
+    if (!exists) {
+      throw new Error(`Tenant ${tenantId} not found.`);
+    }
+    return tenantId;
+  });
+}
+
+export async function listTenantAssets(tenantId: string): Promise<AssetRecord[]> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${tenantId} not found.`);
+    }
+    return store.assets
+      .filter((asset) => asset.tenantId === tenantId)
+      .sort((a, b) => a.name.localeCompare(b.name));
+  });
+}
+
+export async function replaceTenantAssets(
+  tenantId: string,
+  assets: Array<{
+    name: string;
+    address: string;
+    lat: number;
+    lng: number;
+    region?: string;
+    segment?: AssetRecord["segment"];
+    insuredValueAud?: number;
+  }>,
+): Promise<AssetRecord[]> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${tenantId} not found.`);
+    }
+    store.assets = store.assets.filter((asset) => asset.tenantId !== tenantId);
+    const now = nowIso();
+    const created = assets.map((asset) => ({
+      id: `asset-${randomUUID()}`,
+      tenantId,
+      name: asset.name.trim(),
+      address: asset.address.trim(),
+      lat: asset.lat,
+      lng: asset.lng,
+      region: asset.region?.trim() || undefined,
+      segment: asset.segment,
+      insuredValueAud:
+        typeof asset.insuredValueAud === "number" && Number.isFinite(asset.insuredValueAud)
+          ? Math.max(Math.round(asset.insuredValueAud), 0)
+          : undefined,
+      createdAt: now,
+      updatedAt: now,
+    }));
+    store.assets.push(...created);
+    tenant.updatedAt = now;
+    return created;
   });
 }
 

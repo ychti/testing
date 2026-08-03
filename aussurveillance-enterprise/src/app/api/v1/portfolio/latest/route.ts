@@ -69,6 +69,7 @@ export async function GET(request: Request) {
       authMode: latest.authMode ?? "unknown",
       importedAt: latest.createdAt,
       ingestion: latest.ingestion,
+      coverage: latest.coverage,
       warnings: latest.warnings,
       summary: latest.summary,
     });

@@ -25,6 +25,10 @@ export interface LegacyMigrationResult {
     duplicateMarkersCollapsed: number;
     representedStateCount: number;
     nationalCoverageScore: number;
+    assetsProvided?: number;
+    markersMatchedToAssets?: number;
+    unmatchedMarkers?: number;
+    generatedAssetSites?: number;
     byState: Array<{
       state: string;
       markerCount: number;
@@ -38,6 +42,24 @@ export interface LegacyMigrationResult {
 interface SiteAccumulator {
   site: ScoringSite;
   markers: LegacyMarker[];
+  isAssetMapped: boolean;
+  segmentLocked: boolean;
+}
+
+export interface MigrationAsset {
+  id: string;
+  name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  region?: string;
+  segment?: ScoringSite["segment"];
+  insuredValueAud?: number;
+}
+
+interface MigrationOptions {
+  assets?: MigrationAsset[];
+  assetMatchRadiusKm?: number;
 }
 
 const CAMERA_TYPES = new Set(["cctv", "speed", "redlight", "alpr", "combined"]);
@@ -158,6 +180,49 @@ function mapInsuredValue(markerCount: number, region: string): number {
   return Math.round((1_900_000 + markerCount * 120_000) * regionMultiplier);
 }
 
+function haversineKm(aLat: number, aLng: number, bLat: number, bLng: number): number {
+  const degToRad = Math.PI / 180;
+  const dLat = (bLat - aLat) * degToRad;
+  const dLng = (bLng - aLng) * degToRad;
+  const sinLat = Math.sin(dLat / 2);
+  const sinLng = Math.sin(dLng / 2);
+  const aa =
+    sinLat * sinLat +
+    Math.cos(aLat * degToRad) * Math.cos(bLat * degToRad) * sinLng * sinLng;
+  const c = 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+  return 6371 * c;
+}
+
+function findNearestAsset(
+  marker: LegacyMarker,
+  assets: MigrationAsset[],
+  maxRadiusKm: number,
+): MigrationAsset | null {
+  let nearest: MigrationAsset | null = null;
+  let nearestDistance = Number.POSITIVE_INFINITY;
+  for (const asset of assets) {
+    const distance = haversineKm(marker.lat, marker.lng, asset.lat, asset.lng);
+    if (distance > maxRadiusKm || distance >= nearestDistance) {
+      continue;
+    }
+    nearest = asset;
+    nearestDistance = distance;
+  }
+  return nearest;
+}
+
+function assetLabel(asset: MigrationAsset): string {
+  const cleanedAddress = asset.address.trim();
+  if (!cleanedAddress) {
+    return asset.name;
+  }
+  return `${asset.name} — ${cleanedAddress}`;
+}
+
+function assetSiteId(asset: MigrationAsset): string {
+  return asset.id.startsWith("asset-") ? asset.id : `asset-${asset.id}`;
+}
+
 function buildObservationForSite(
   siteId: string,
   markers: LegacyMarker[],
@@ -240,12 +305,26 @@ function buildObservationForSite(
 
 export function migrateLegacyMarkersToPortfolio(
   rawMarkers: LegacyMarker[],
+  options: MigrationOptions = {},
 ): LegacyMigrationResult {
   const warnings: string[] = [];
   const accepted: LegacyMarker[] = [];
   const dedupedByKey = new Map<string, LegacyMarker>();
   let invalidMarkers = 0;
   let duplicateMarkersCollapsed = 0;
+  const assets = (options.assets ?? []).filter((asset) => {
+    return (
+      typeof asset.name === "string" &&
+      asset.name.trim().length > 0 &&
+      Number.isFinite(asset.lat) &&
+      Number.isFinite(asset.lng)
+    );
+  });
+  const assetMatchRadiusKm = Math.min(
+    Math.max(options.assetMatchRadiusKm ?? 1.2, 0.2),
+    5,
+  );
+  let markersMatchedToAssets = 0;
 
   for (const marker of rawMarkers) {
     const isValidCoord =
@@ -282,31 +361,48 @@ export function migrateLegacyMarkersToPortfolio(
   const stateConfidence = new Map<string, { total: number; count: number }>();
   const stateMarkerCount = new Map<string, number>();
   for (const marker of normalizedMarkers) {
+    const markerRegion = inferRegion(marker.lat, marker.lng);
     const latCell = roundToCell(marker.lat);
     const lngCell = roundToCell(marker.lng);
-    const region = inferRegion(marker.lat, marker.lng);
+    const nearestAsset =
+      assets.length > 0
+        ? findNearestAsset(marker, assets, assetMatchRadiusKm)
+        : null;
+    const region = nearestAsset?.region?.trim() || markerRegion;
     stateMarkerCount.set(region, (stateMarkerCount.get(region) ?? 0) + 1);
     const confidence = buildLegacyMarkerQuality(marker).confidenceScore;
     const confidenceBucket = stateConfidence.get(region) ?? { total: 0, count: 0 };
     confidenceBucket.total += confidence;
     confidenceBucket.count += 1;
     stateConfidence.set(region, confidenceBucket);
-
-    const siteId = `${region.toLowerCase()}-${latCell.toFixed(2)}-${lngCell.toFixed(2)}`;
+    const siteId = nearestAsset
+      ? assetSiteId(nearestAsset)
+      : `${region.toLowerCase()}-${latCell.toFixed(2)}-${lngCell.toFixed(2)}`;
     const existing = accumulators.get(siteId);
     if (existing) {
       existing.markers.push(marker);
+      if (nearestAsset) {
+        markersMatchedToAssets += 1;
+      }
       continue;
     }
     const markerTypes = new Set([marker.type]);
     const site: ScoringSite = {
       id: siteId,
-      name: siteLabel(region, latCell, lngCell),
-      segment: inferSegment(markerTypes),
+      name: nearestAsset ? assetLabel(nearestAsset) : siteLabel(region, latCell, lngCell),
+      segment: nearestAsset?.segment ?? inferSegment(markerTypes),
       region,
-      insuredValueAud: 0,
+      insuredValueAud: nearestAsset?.insuredValueAud ?? 0,
     };
-    accumulators.set(siteId, { site, markers: [marker] });
+    accumulators.set(siteId, {
+      site,
+      markers: [marker],
+      isAssetMapped: Boolean(nearestAsset),
+      segmentLocked: Boolean(nearestAsset?.segment),
+    });
+    if (nearestAsset) {
+      markersMatchedToAssets += 1;
+    }
   }
 
   const sites: ScoringSite[] = [];
@@ -315,11 +411,15 @@ export function migrateLegacyMarkersToPortfolio(
 
   for (const [, accumulator] of accumulators) {
     const markerTypes = new Set(accumulator.markers.map((marker) => marker.type));
-    accumulator.site.segment = inferSegment(markerTypes);
-    accumulator.site.insuredValueAud = mapInsuredValue(
-      accumulator.markers.length,
-      accumulator.site.region,
-    );
+    if (!accumulator.segmentLocked) {
+      accumulator.site.segment = inferSegment(markerTypes);
+    }
+    if (!accumulator.site.insuredValueAud || accumulator.site.insuredValueAud <= 0) {
+      accumulator.site.insuredValueAud = mapInsuredValue(
+        accumulator.markers.length,
+        accumulator.site.region,
+      );
+    }
     sites.push(accumulator.site);
     const siteSet = stateSiteSet.get(accumulator.site.region) ?? new Set<string>();
     siteSet.add(accumulator.site.id);
@@ -343,6 +443,14 @@ export function migrateLegacyMarkersToPortfolio(
     if (ratio > 0.2) {
       warnings.push(
         "High duplicate density detected in import feed; verify upstream deduplication quality.",
+      );
+    }
+  }
+  if (assets.length > 0) {
+    const matchedRatio = markersMatchedToAssets / Math.max(normalizedMarkers.length, 1);
+    if (matchedRatio < 0.6) {
+      warnings.push(
+        "Large share of markers could not be attached to uploaded assets. Check asset coordinates or increase portfolio coverage.",
       );
     }
   }
@@ -430,6 +538,10 @@ export function migrateLegacyMarkersToPortfolio(
       duplicateMarkersCollapsed,
       representedStateCount: representedStates.length,
       nationalCoverageScore,
+      assetsProvided: assets.length,
+      markersMatchedToAssets,
+      unmatchedMarkers: Math.max(normalizedMarkers.length - markersMatchedToAssets, 0),
+      generatedAssetSites: sites.filter((site) => site.id.startsWith("asset-")).length,
       byState,
     },
     warnings,

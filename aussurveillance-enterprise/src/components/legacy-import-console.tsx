@@ -199,7 +199,12 @@ export function LegacyImportConsole() {
     if (typeof window !== "undefined") {
       window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
     }
-    void loadAssets(selectedTenantId);
+    const timer = window.setTimeout(() => {
+      void loadAssets(selectedTenantId);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+    };
   }, [selectedTenantId]);
 
   async function handleCreateTenant() {

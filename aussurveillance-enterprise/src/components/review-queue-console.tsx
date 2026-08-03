@@ -117,28 +117,44 @@ export function ReviewQueueConsole() {
     setStats(payload.stats);
   }
 
-  async function bootstrap() {
-    setLoading(true);
-    try {
-      const initialTenantId = await loadTenants();
-      if (!initialTenantId) {
-        setStatus("No tenant found. Create one first in Migration.");
-        setCandidate(null);
-        return;
-      }
-      await loadNextCandidate(initialTenantId);
-      setStatus("Review queue ready. Swipe left/right or click cross/check.");
-    } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Failed to load review queue.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }
-
   useEffect(() => {
-    void bootstrap();
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        setLoading(true);
+        try {
+          const initialTenantId = await loadTenants();
+          if (cancelled) {
+            return;
+          }
+          if (!initialTenantId) {
+            setStatus("No tenant found. Create one first in Migration.");
+            setCandidate(null);
+            return;
+          }
+          await loadNextCandidate(initialTenantId);
+          if (cancelled) {
+            return;
+          }
+          setStatus("Review queue ready. Click cross/check to continue.");
+        } catch (error) {
+          if (cancelled) {
+            return;
+          }
+          setStatus(
+            error instanceof Error ? error.message : "Failed to load review queue.",
+          );
+        } finally {
+          if (!cancelled) {
+            setLoading(false);
+          }
+        }
+      })();
+    }, 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, []);
 
   useEffect(() => {
@@ -311,26 +327,6 @@ export function ReviewQueueConsole() {
       setLoading(false);
     }
   }
-
-  useEffect(() => {
-    function onKeydown(event: KeyboardEvent) {
-      if (!candidate || loading) {
-        return;
-      }
-      if (event.key === "ArrowLeft") {
-        event.preventDefault();
-        void handleDecision("reject");
-      }
-      if (event.key === "ArrowRight") {
-        event.preventDefault();
-        void handleDecision("approve");
-      }
-    }
-    window.addEventListener("keydown", onKeydown);
-    return () => {
-      window.removeEventListener("keydown", onKeydown);
-    };
-  }, [candidate, loading, reviewerNote, selectedTenantId]);
 
   const mapUrl = candidate
     ? `https://www.google.com/maps?q=${candidate.marker.lat},${candidate.marker.lng}`

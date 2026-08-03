@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "surveillance:agent": "node tools/google-surveillance-agent.mjs",
+    "surveillance:merge": "node tools/merge-surveillance-batches.mjs"
   },
   "dependencies": {
     "firebase-admin": "^14.2.0",

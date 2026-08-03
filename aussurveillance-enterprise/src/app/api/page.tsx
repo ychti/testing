@@ -119,22 +119,6 @@ export default function ApiDocsPage() {
         </article>
         <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
           <h2 className="text-lg font-semibold text-white">
-            POST /api/v1/import/google-streetview
-          </h2>
-          <p className="mt-2 text-sm text-slate-300">
-            Authorized Google Street View ingestion for tenant assets. Pulls imagery via
-            Google APIs, runs vision detection, and persists scored portfolio snapshots.
-            Pass `assetIds` to assign location-specific work to separate agents, or set
-            `outputMode: &quot;markers&quot;` to export a surveillance JSON batch file.
-          </p>
-          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
-            <code>{`curl -X POST https://your-domain.com/api/v1/import/google-streetview \
-  -H "content-type: application/json" \
-  -d '{"tenantId":"tenant-123","assetIds":["asset-1","asset-2"],"maxAssets":250,"headings":[0,90,180,270],"radiusMeters":120,"detectionThreshold":0.72,"outputMode":"markers"}'`}</code>
-          </pre>
-        </article>
-        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
-          <h2 className="text-lg font-semibold text-white">
             GET /api/v1/reports/executive
           </h2>
           <p className="mt-2 text-sm text-slate-300">

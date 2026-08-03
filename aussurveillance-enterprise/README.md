@@ -29,7 +29,6 @@ This application demonstrates the transformation from a camera mapping concept i
 - `POST /api/v1/import/firestore-markers`
 - `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
 - `POST /api/v1/import/official-state-feeds` (NSW/QLD/VIC/SA/WA/ACT)
-- `POST /api/v1/import/google-streetview` (authorized Google imagery pipeline; supports `assetIds` and `outputMode: "markers"` for agent batch files)
 - `GET /api/v1/assets?tenantId=<id>`
 - `POST /api/v1/assets`
 - `GET /api/v1/reports/executive?tenantId=<id>&format=markdown`
@@ -49,8 +48,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - historical trend snapshots (risk/confidence/freshness/exposure deltas)
 - underwriting decision mix (approve/conditional/refer/decline)
 - exportable executive report generation
-- authorized Google Street View ingestion with vision-based camera detection
-- multi-agent location batching via asset ID assignment and surveillance JSON exports
+- standalone Google surveillance collector scripts (outside web UI)
 - workspace-scoped import history
 - audited API actions
 - rate limiting on high-cost endpoints
@@ -104,15 +102,33 @@ For local dev convenience, you may set:
 - `ALLOW_PUBLIC_LIVE_IMPORT=true`
 - `ALLOW_PUBLIC_TENANT_READ=true`
 - `ALLOW_PUBLIC_TENANT_WRITE=true`
-- `ALLOW_PUBLIC_GOOGLE_IMPORT=true`
 
-Google authorized import requires:
-- `GOOGLE_MAPS_API_KEY`
-- `GOOGLE_VISION_API_KEY` (recommended; falls back to maps key if omitted)
+## Standalone surveillance collector (separate from website)
 
-For multi-agent collection, assign each worker a separate `assetIds` slice and call:
-- `POST /api/v1/import/google-streetview` with `outputMode: "markers"` to export surveillance JSON
-- then re-import merged/single batch files through `/migration` legacy marker upload
+The Google mapping agent is intentionally kept out of the website UI. Run it as standalone CLI tooling:
+
+```bash
+# Create per-agent batch plans from your asset CSV
+npm run surveillance:agent -- --assets ./assets.csv --batch-count 6 --plan-only
+
+# Run one specific worker batch (example: agent 2 of 6)
+GOOGLE_MAPS_API_KEY=... GOOGLE_VISION_API_KEY=... \
+npm run surveillance:agent -- \
+  --assets ./assets.csv \
+  --batch-count 6 \
+  --batch-index 2 \
+  --headings 0,90,180,270 \
+  --radius-meters 120 \
+  --threshold 0.72 \
+  --out ./surveillance-batch-2.json
+
+# Merge all worker outputs into one import file
+npm run surveillance:merge -- --out ./surveillance-merged.json ./surveillance-batch-*.json
+```
+
+Then upload merged/single batch JSON files through `/migration` legacy marker upload.
+
+Detailed runbook: `docs/standalone-surveillance-agent.md`
 
 ### Production security notes
 

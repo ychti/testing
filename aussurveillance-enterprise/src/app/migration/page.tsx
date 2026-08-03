@@ -7,6 +7,7 @@ const checklist = [
   "Upload tenant asset registry CSV first so outputs map to real named sites.",
   "Run official multi-state feed import (NSW/QLD/VIC/SA/WA/ACT) for national depth.",
   "Run standalone surveillance agent script outside the web app, then upload resulting JSON files here.",
+  "Send uncertain detections to the Review queue for check/cross human validation before portfolio import.",
   "Click 'Import Live Data Now' for the easiest one-click pipeline.",
   "Export markers from Firestore with id, coordinates, source, quality, lifecycle, and timestamps.",
   "Run payload through /api/v1/import/legacy-markers or pull directly with /api/v1/import/firestore-markers.",

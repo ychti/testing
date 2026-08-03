@@ -130,6 +130,35 @@ export default function ApiDocsPage() {
           </pre>
         </article>
         <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            POST/PATCH /api/v1/review-candidates
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Queue questionable detections for human review and mark each candidate
+            as approved or rejected using check/cross decisions.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -X POST https://your-domain.com/api/v1/review-candidates \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"tenant-123","sourceLabel":"batch-4","markers":[{"lat":-33.87,"lng":151.21,"type":"cctv"}]}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
+          <h2 className="text-lg font-semibold text-white">
+            GET /api/v1/review-candidates/next and POST /api/v1/import/review-approved
+          </h2>
+          <p className="mt-2 text-sm text-slate-300">
+            Fetch the next pending item for swipe-style review, then import only
+            approved candidates into scored tenant snapshots.
+          </p>
+          <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
+            <code>{`curl -s "https://your-domain.com/api/v1/review-candidates/next?tenantId=tenant-123"\n\ncurl -X POST https://your-domain.com/api/v1/import/review-approved \\
+  -H "authorization: Bearer <api-key>" \\
+  -H "content-type: application/json" \\
+  -d '{"tenantId":"tenant-123","unexportedOnly":true}'`}</code>
+          </pre>
+        </article>
+        <article className="rounded-2xl border border-white/10 bg-slate-900/65 p-5">
           <h2 className="text-lg font-semibold text-white">GET /api/v1/audit</h2>
           <p className="mt-2 text-sm text-slate-300">
             Returns recent request audit events for compliance and incident

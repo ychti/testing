@@ -15,6 +15,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - **Trust** (`/trust`): governance and compliance controls
 - **API Docs** (`/api`): endpoint references and sample payloads
 - **Migration Console** (`/migration`): import legacy markers and preview enterprise scoring
+- **Review Queue** (`/review`): swipe-style human approval for questionable CCTV detections
 - **Customers** (`/customers`): tenant snapshots, trend analytics, import history
 - **Operations** (`/operations`): operator auth and audit monitoring
 
@@ -29,6 +30,10 @@ This application demonstrates the transformation from a camera mapping concept i
 - `POST /api/v1/import/firestore-markers`
 - `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
 - `POST /api/v1/import/official-state-feeds` (NSW/QLD/VIC/SA/WA/ACT)
+- `GET/POST/PATCH /api/v1/review-candidates`
+- `GET /api/v1/review-candidates/next?tenantId=<id>`
+- `GET /api/v1/review-candidates/export?tenantId=<id>`
+- `POST /api/v1/import/review-approved`
 - `GET /api/v1/assets?tenantId=<id>`
 - `POST /api/v1/assets`
 - `GET /api/v1/reports/executive?tenantId=<id>&format=markdown`
@@ -49,6 +54,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - underwriting decision mix (approve/conditional/refer/decline)
 - exportable executive report generation
 - standalone Google surveillance collector scripts (outside web UI)
+- human-in-the-loop CCTV approval queue with check/cross decisions
 - workspace-scoped import history
 - audited API actions
 - rate limiting on high-cost endpoints

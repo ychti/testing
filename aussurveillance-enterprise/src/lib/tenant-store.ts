@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile } from "fs/promises";
 import path from "path";
 import { randomUUID } from "crypto";
 import type { PortfolioSummary } from "@/lib/scoring-engine";
+import type { LegacyMarker } from "@/lib/legacy-model";
 
 export interface TenantRecord {
   id: string;
@@ -20,7 +21,8 @@ export interface ImportRunRecord {
     | "legacy-file"
     | "firestore-admin"
     | "live-public"
-    | "official-state-feeds";
+    | "official-state-feeds"
+    | "review-approved";
   authMode?: string;
   actorId: string;
   createdAt: string;
@@ -65,11 +67,35 @@ export interface AssetRecord {
   updatedAt: string;
 }
 
+export interface ReviewCandidateRecord {
+  id: string;
+  tenantId: string;
+  sourceLabel?: string;
+  marker: LegacyMarker;
+  markerKey: string;
+  status: "pending" | "approved" | "rejected";
+  submittedAt: string;
+  submittedBy: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+  reviewerNote?: string;
+  exportedAt?: string;
+}
+
+export interface ReviewQueueStats {
+  pending: number;
+  approved: number;
+  rejected: number;
+  exported: number;
+  total: number;
+}
+
 interface TenantStore {
   schemaVersion: number;
   tenants: TenantRecord[];
   importRuns: ImportRunRecord[];
   assets: AssetRecord[];
+  reviewCandidates: ReviewCandidateRecord[];
 }
 
 const DEFAULT_TENANT_ID = "tenant-default";
@@ -85,10 +111,11 @@ function tenantStorePath(): string {
 
 function emptyStore(): TenantStore {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     tenants: [],
     importRuns: [],
     assets: [],
+    reviewCandidates: [],
   };
 }
 
@@ -107,6 +134,9 @@ async function readStore(): Promise<TenantStore> {
     }
     if (!Array.isArray(parsed.assets)) {
       (parsed as TenantStore).assets = [];
+    }
+    if (!Array.isArray(parsed.reviewCandidates)) {
+      (parsed as TenantStore).reviewCandidates = [];
     }
     return parsed;
   } catch {
@@ -296,6 +326,201 @@ export async function saveImportRun(input: {
     store.importRuns.push(run);
     tenant.updatedAt = nowIso();
     return run;
+  });
+}
+
+function markerQueueKey(marker: LegacyMarker): string {
+  const lat = Number.isFinite(marker.lat) ? marker.lat.toFixed(5) : "na";
+  const lng = Number.isFinite(marker.lng) ? marker.lng.toFixed(5) : "na";
+  const direction = Number.isFinite(marker.direction ?? NaN)
+    ? Math.round(Number(marker.direction)).toString()
+    : "na";
+  return [
+    marker.id ?? "no-id",
+    marker.type,
+    lat,
+    lng,
+    marker.cctvMode ?? "na",
+    direction,
+  ].join("|");
+}
+
+function reviewStats(candidates: ReviewCandidateRecord[]): ReviewQueueStats {
+  const pending = candidates.filter((item) => item.status === "pending").length;
+  const approved = candidates.filter((item) => item.status === "approved").length;
+  const rejected = candidates.filter((item) => item.status === "rejected").length;
+  const exported = candidates.filter((item) => Boolean(item.exportedAt)).length;
+  return {
+    pending,
+    approved,
+    rejected,
+    exported,
+    total: candidates.length,
+  };
+}
+
+export async function enqueueReviewCandidates(input: {
+  tenantId: string;
+  sourceLabel?: string;
+  submittedBy: string;
+  markers: LegacyMarker[];
+}) {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === input.tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${input.tenantId} not found.`);
+    }
+    const existingKeys = new Set(
+      store.reviewCandidates
+        .filter((item) => item.tenantId === input.tenantId)
+        .map((item) => item.markerKey),
+    );
+    const now = nowIso();
+    const created: ReviewCandidateRecord[] = [];
+    for (const marker of input.markers) {
+      const markerKey = markerQueueKey(marker);
+      if (existingKeys.has(markerKey)) {
+        continue;
+      }
+      existingKeys.add(markerKey);
+      created.push({
+        id: `candidate-${randomUUID()}`,
+        tenantId: input.tenantId,
+        sourceLabel: input.sourceLabel?.trim() || undefined,
+        marker,
+        markerKey,
+        status: "pending",
+        submittedAt: now,
+        submittedBy: input.submittedBy,
+      });
+    }
+    store.reviewCandidates.push(...created);
+    tenant.updatedAt = nowIso();
+    const tenantCandidates = store.reviewCandidates.filter(
+      (item) => item.tenantId === input.tenantId,
+    );
+    return {
+      createdCount: created.length,
+      skippedCount: input.markers.length - created.length,
+      stats: reviewStats(tenantCandidates),
+    };
+  });
+}
+
+export async function listReviewCandidates(input: {
+  tenantId: string;
+  status?: ReviewCandidateRecord["status"];
+  limit?: number;
+}): Promise<ReviewCandidateRecord[]> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === input.tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${input.tenantId} not found.`);
+    }
+    const limit = Math.min(Math.max(Math.floor(input.limit ?? 100), 1), 1000);
+    return store.reviewCandidates
+      .filter((item) => item.tenantId === input.tenantId)
+      .filter((item) => (input.status ? item.status === input.status : true))
+      .sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime())
+      .slice(0, limit);
+  });
+}
+
+export async function getNextPendingReviewCandidate(
+  tenantId: string,
+): Promise<ReviewCandidateRecord | null> {
+  const pending = await listReviewCandidates({ tenantId, status: "pending", limit: 1 });
+  return pending[0] ?? null;
+}
+
+export async function decideReviewCandidate(input: {
+  tenantId: string;
+  candidateId: string;
+  decision: "approve" | "reject";
+  reviewerId: string;
+  reviewerNote?: string;
+}): Promise<ReviewCandidateRecord> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const candidate = store.reviewCandidates.find(
+      (item) => item.tenantId === input.tenantId && item.id === input.candidateId,
+    );
+    if (!candidate) {
+      throw new Error(`Review candidate ${input.candidateId} not found.`);
+    }
+    candidate.status = input.decision === "approve" ? "approved" : "rejected";
+    candidate.reviewedAt = nowIso();
+    candidate.reviewedBy = input.reviewerId;
+    candidate.reviewerNote = input.reviewerNote?.trim() || undefined;
+    if (candidate.status !== "approved") {
+      candidate.exportedAt = undefined;
+    }
+    return candidate;
+  });
+}
+
+export async function getReviewQueueStats(tenantId: string): Promise<ReviewQueueStats> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${tenantId} not found.`);
+    }
+    return reviewStats(
+      store.reviewCandidates.filter((item) => item.tenantId === tenantId),
+    );
+  });
+}
+
+export async function collectApprovedReviewMarkers(input: {
+  tenantId: string;
+  limit?: number;
+  unexportedOnly?: boolean;
+}): Promise<{ markers: LegacyMarker[]; candidateIds: string[]; stats: ReviewQueueStats }> {
+  return withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const tenant = store.tenants.find((item) => item.id === input.tenantId);
+    if (!tenant) {
+      throw new Error(`Tenant ${input.tenantId} not found.`);
+    }
+    const limit = Math.min(Math.max(Math.floor(input.limit ?? 50_000), 1), 250_000);
+    const approved = store.reviewCandidates
+      .filter((item) => item.tenantId === input.tenantId)
+      .filter((item) => item.status === "approved")
+      .filter((item) => (input.unexportedOnly ? !item.exportedAt : true))
+      .sort((a, b) => new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime())
+      .slice(0, limit);
+    return {
+      markers: approved.map((item) => item.marker),
+      candidateIds: approved.map((item) => item.id),
+      stats: reviewStats(
+        store.reviewCandidates.filter((item) => item.tenantId === input.tenantId),
+      ),
+    };
+  });
+}
+
+export async function markReviewCandidatesExported(
+  tenantId: string,
+  candidateIds: string[],
+): Promise<void> {
+  if (candidateIds.length === 0) {
+    return;
+  }
+  await withStoreWrite((store) => {
+    ensureDefaultTenantInStore(store);
+    const set = new Set(candidateIds);
+    const exportedAt = nowIso();
+    for (const candidate of store.reviewCandidates) {
+      if (candidate.tenantId !== tenantId || !set.has(candidate.id)) {
+        continue;
+      }
+      if (candidate.status === "approved") {
+        candidate.exportedAt = exportedAt;
+      }
+    }
   });
 }
 

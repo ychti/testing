@@ -271,12 +271,12 @@ export function LegacyImportConsole() {
     if (!selectedTenantId) {
       return;
     }
-    setAgentPlans([]);
-    setGoogleAssetIdFilter("");
     if (typeof window !== "undefined") {
       window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
     }
     const timer = window.setTimeout(() => {
+      setAgentPlans([]);
+      setGoogleAssetIdFilter("");
       void loadAssets(selectedTenantId);
     }, 0);
     return () => {

@@ -125,7 +125,7 @@ export default function ApiDocsPage() {
             Authorized Google Street View ingestion for tenant assets. Pulls imagery via
             Google APIs, runs vision detection, and persists scored portfolio snapshots.
             Pass `assetIds` to assign location-specific work to separate agents, or set
-            `outputMode: "markers"` to export a surveillance JSON batch file.
+            `outputMode: &quot;markers&quot;` to export a surveillance JSON batch file.
           </p>
           <pre className="mt-4 overflow-auto rounded-xl border border-white/10 bg-slate-950 p-4 text-sm text-cyan-100">
             <code>{`curl -X POST https://your-domain.com/api/v1/import/google-streetview \

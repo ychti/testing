@@ -30,6 +30,21 @@ Environment:
 `;
 }
 
+function looksLikePlaceholder(value) {
+  const normalized = String(value ?? "").trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  return (
+    normalized.includes("your_real") ||
+    normalized.includes("your_key") ||
+    normalized.includes("replace_me") ||
+    normalized.includes("replace-with") ||
+    normalized.includes("changeme") ||
+    normalized === "..."
+  );
+}
+
 function parseArgs(argv) {
   const args = {};
   for (let index = 0; index < argv.length; index += 1) {
@@ -316,7 +331,17 @@ async function main() {
   if (!mapsApiKey) {
     throw new Error("GOOGLE_MAPS_API_KEY is required.");
   }
+  if (looksLikePlaceholder(mapsApiKey)) {
+    throw new Error(
+      "GOOGLE_MAPS_API_KEY looks like a placeholder value. Set a real Google API key.",
+    );
+  }
   const visionApiKey = process.env.GOOGLE_VISION_API_KEY?.trim() || "";
+  if (visionApiKey && looksLikePlaceholder(visionApiKey)) {
+    throw new Error(
+      "GOOGLE_VISION_API_KEY looks like a placeholder value. Set a real Google Vision key or unset it.",
+    );
+  }
 
   const headings = parseHeadings(args.headings);
   const radiusMeters = clamp(Number(args["radius-meters"] ?? 120), 5, 500);
@@ -435,9 +460,21 @@ async function main() {
     String(args.out ?? `./surveillance-batch-${label}.json`),
   );
   await writeFile(outputPath, JSON.stringify(output, null, 2), "utf8");
+  console.log(`Saved output to ${outputPath}`);
   console.log(
-    `Saved ${markers.length} markers from ${selectedAssets.length} assets to ${outputPath}`,
+    `Diagnostics: assets=${selectedAssets.length}, imagery=${assetsWithImagery}, detections=${assetsWithDetections}, markers=${markers.length}, images=${imagesAnalyzed}`,
   );
+  if (warnings.length > 0) {
+    console.log("Warnings:");
+    for (const warning of warnings) {
+      console.log(`- ${warning}`);
+    }
+  }
+  if (markers.length === 0) {
+    console.log(
+      "No markers generated. Common causes: invalid API key, APIs not enabled, no Street View imagery within radius, or threshold too high.",
+    );
+  }
 }
 
 main().catch((error) => {

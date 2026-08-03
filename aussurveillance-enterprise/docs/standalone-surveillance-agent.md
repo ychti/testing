@@ -48,6 +48,11 @@ npm run surveillance:agent -- \
   --out ./surveillance-batch-2.json
 ```
 
+Before running, verify your keys are real values (not placeholders) and that these Google APIs are enabled on the same project:
+- Street View Static API
+- Vision API
+- Billing enabled
+
 ## 4) Merge all batch outputs
 
 ```bash

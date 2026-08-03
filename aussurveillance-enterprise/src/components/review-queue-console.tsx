@@ -65,6 +65,7 @@ export function ReviewQueueConsole() {
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [status, setStatus] = useState("Loading review queue...");
+  const [uploadLabel, setUploadLabel] = useState("No file selected yet.");
   const [loading, setLoading] = useState(false);
   const [reviewerNote, setReviewerNote] = useState("");
   const [sourceLabel, setSourceLabel] = useState("google-surveillance-batch");
@@ -189,11 +190,18 @@ export function ReviewQueueConsole() {
   }, [selectedTenantId]);
 
   async function handleUploadFile(file: File) {
-    if (!selectedTenantId) {
-      setStatus("Select a tenant before uploading candidates.");
+    const fallbackTenantId =
+      selectedTenantId || tenants[0]?.id || (await loadTenants());
+    if (!fallbackTenantId) {
+      setStatus("No tenant available. Create one first on Migration page.");
       return;
     }
+    if (!selectedTenantId) {
+      setSelectedTenantId(fallbackTenantId);
+    }
+    setUploadLabel(`Selected file: ${file.name}`);
     setLoading(true);
+    setStatus(`Uploading ${file.name}...`);
     try {
       const raw = await file.text();
       const payload = JSON.parse(raw) as unknown;
@@ -206,7 +214,7 @@ export function ReviewQueueConsole() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          tenantId: selectedTenantId,
+          tenantId: fallbackTenantId,
           sourceLabel: sourceLabel.trim() || undefined,
           markers,
         }),
@@ -219,9 +227,9 @@ export function ReviewQueueConsole() {
         return;
       }
       setStats(body.stats);
-      await loadNextCandidate(selectedTenantId);
+      await loadNextCandidate(fallbackTenantId);
       setStatus(
-        `Queued ${body.createdCount} candidates (${body.skippedCount} duplicates skipped).`,
+        `Queued ${body.createdCount} candidates from ${file.name} (${body.skippedCount} duplicates skipped).`,
       );
     } catch (error) {
       setStatus(
@@ -381,6 +389,7 @@ export function ReviewQueueConsole() {
           <input
             type="file"
             accept="application/json"
+            disabled={loading}
             className="rounded-lg border border-dashed border-white/20 bg-slate-950 px-3 py-2 text-xs text-slate-300 file:mr-3 file:rounded-md file:border-0 file:bg-cyan-500/20 file:px-3 file:py-1 file:text-cyan-100"
             onChange={(event) => {
               const file = event.target.files?.[0];
@@ -391,6 +400,7 @@ export function ReviewQueueConsole() {
               event.target.value = "";
             }}
           />
+          <span className="text-xs text-slate-400">{uploadLabel}</span>
         </label>
       </div>
 

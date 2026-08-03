@@ -5,6 +5,7 @@ import Link from "next/link";
 const checklist = [
   "For quickest start, skip login and click 'Import Live Data Now'.",
   "Upload tenant asset registry CSV first so outputs map to real named sites.",
+  "Generate multi-agent location batches and assign asset IDs per worker.",
   "Run official multi-state feed import (NSW/QLD/VIC/SA/WA/ACT) for national depth.",
   "Run authorized Google Street View import for dense, asset-level verification coverage.",
   "Click 'Import Live Data Now' for the easiest one-click pipeline.",

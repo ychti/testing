@@ -81,6 +81,24 @@ interface AssetRecord {
   insuredValueAud?: number;
 }
 
+interface GoogleMarkersBatchResponse {
+  tenantId: string;
+  mode: "markers";
+  batchLabel: string;
+  collectedAt: string;
+  selectedAssetIds: string[];
+  google: NonNullable<ImportResult["google"]>;
+  warnings: string[];
+  markers: unknown[];
+}
+
+interface AgentBatchPlan {
+  id: string;
+  label: string;
+  assetIds: string[];
+  assets: AssetRecord[];
+}
+
 function extractMarkers(payload: unknown): unknown[] {
   if (Array.isArray(payload)) {
     return payload;
@@ -122,6 +140,9 @@ export function LegacyImportConsole() {
   const [googleRadiusMeters, setGoogleRadiusMeters] = useState<number>(120);
   const [googleMaxAssets, setGoogleMaxAssets] = useState<number>(250);
   const [googleDetectionThreshold, setGoogleDetectionThreshold] = useState<number>(0.72);
+  const [googleAssetIdFilter, setGoogleAssetIdFilter] = useState<string>("");
+  const [agentBatchCount, setAgentBatchCount] = useState<number>(4);
+  const [agentPlans, setAgentPlans] = useState<AgentBatchPlan[]>([]);
 
   async function fetchTenantsData(): Promise<TenantRecord[]> {
     const response = await fetch("/api/v1/tenants");
@@ -176,6 +197,46 @@ export function LegacyImportConsole() {
     }
   }
 
+  function parseAssetIdsFilter(): string[] {
+    return googleAssetIdFilter
+      .split(",")
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+  }
+
+  function buildAgentPlans(count: number) {
+    const planCount = Math.min(Math.max(Math.floor(count), 2), 20);
+    if (assets.length === 0) {
+      setAgentPlans([]);
+      setStatus("Import assets first before generating agent batches.");
+      return;
+    }
+    const sorted = [...assets].sort((a, b) => {
+      const regionA = (a.region ?? "ZZZ").toUpperCase();
+      const regionB = (b.region ?? "ZZZ").toUpperCase();
+      if (regionA !== regionB) {
+        return regionA.localeCompare(regionB);
+      }
+      return a.name.localeCompare(b.name);
+    });
+    const groups: AgentBatchPlan[] = Array.from({ length: planCount }, (_, index) => ({
+      id: `agent-${index + 1}`,
+      label: `Agent ${index + 1}`,
+      assetIds: [],
+      assets: [],
+    }));
+    sorted.forEach((asset, index) => {
+      const bucket = groups[index % planCount];
+      bucket.assetIds.push(asset.id);
+      bucket.assets.push(asset);
+    });
+    const nonEmpty = groups.filter((group) => group.assetIds.length > 0);
+    setAgentPlans(nonEmpty);
+    setStatus(
+      `Generated ${nonEmpty.length} agent batches for ${sorted.length} assets.`,
+    );
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function bootstrapTenants() {
@@ -210,6 +271,8 @@ export function LegacyImportConsole() {
     if (!selectedTenantId) {
       return;
     }
+    setAgentPlans([]);
+    setGoogleAssetIdFilter("");
     if (typeof window !== "undefined") {
       window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
     }
@@ -362,6 +425,7 @@ export function LegacyImportConsole() {
     setLoading(true);
     setStatus("Pulling authorized Google Street View imagery and scoring detections...");
     try {
+      const assetIds = parseAssetIdsFilter();
       const headings = googleHeadings
         .split(",")
         .map((value) => Number(value.trim()))
@@ -375,6 +439,7 @@ export function LegacyImportConsole() {
           headings,
           radiusMeters: googleRadiusMeters,
           detectionThreshold: googleDetectionThreshold,
+          assetIds: assetIds.length > 0 ? assetIds : undefined,
         }),
       });
       const payload = (await response.json()) as ImportResult | { error: string };
@@ -397,6 +462,76 @@ export function LegacyImportConsole() {
         }`,
       );
       setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleMarkerBatchExport = async (batchAssetIds?: string[]) => {
+    if (!selectedTenantId) {
+      setStatus("Select a tenant before exporting Google surveillance file batches.");
+      return;
+    }
+    if (assets.length === 0) {
+      setStatus("Import asset registry first so Google pull can target named sites.");
+      return;
+    }
+    setLoading(true);
+    setStatus("Collecting Google markers and exporting surveillance batch JSON...");
+    try {
+      const requestedAssetIds = batchAssetIds ?? parseAssetIdsFilter();
+      const headings = googleHeadings
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value));
+      const response = await fetch("/api/v1/import/google-streetview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: selectedTenantId,
+          maxAssets: googleMaxAssets,
+          headings,
+          radiusMeters: googleRadiusMeters,
+          detectionThreshold: googleDetectionThreshold,
+          assetIds: requestedAssetIds.length > 0 ? requestedAssetIds : undefined,
+          outputMode: "markers",
+          batchLabel:
+            requestedAssetIds.length > 0
+              ? `batch-${requestedAssetIds[0]}-${requestedAssetIds.length}`
+              : `batch-all-${googleMaxAssets}`,
+        }),
+      });
+      const payload = (await response.json()) as
+        | GoogleMarkersBatchResponse
+        | { error: string };
+      if (!response.ok || !("markers" in payload)) {
+        setStatus(
+          "Google surveillance file export failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        return;
+      }
+      const blob = new Blob([JSON.stringify(payload, null, 2)], {
+        type: "application/json;charset=utf-8",
+      });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      const suffix = payload.batchLabel.replace(/[^a-zA-Z0-9_-]+/g, "-").slice(0, 64);
+      link.download = `surveillance-${selectedTenantId}-${suffix}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setStatus(
+        `Exported surveillance batch file (${payload.markers.length} markers). Import it later via legacy marker file upload.`,
+      );
+    } catch (error) {
+      setStatus(
+        `Google surveillance file export failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
     } finally {
       setLoading(false);
     }
@@ -675,12 +810,16 @@ export function LegacyImportConsole() {
             Active assets for tenant:{" "}
             <span className="font-semibold text-white">{assets.length}</span>
           </span>
+          <span className="text-xs text-slate-500">
+            Use Asset IDs for multi-agent location batches.
+          </span>
         </div>
         {assets.length > 0 ? (
           <div className="mt-3 overflow-auto rounded-lg border border-white/10">
             <table className="min-w-full text-left text-xs text-slate-200">
               <thead className="bg-slate-900/75 uppercase tracking-[0.14em] text-slate-400">
                 <tr>
+                  <th className="px-3 py-2">Asset ID</th>
                   <th className="px-3 py-2">Name</th>
                   <th className="px-3 py-2">Address</th>
                   <th className="px-3 py-2">Region</th>
@@ -690,6 +829,7 @@ export function LegacyImportConsole() {
               <tbody className="divide-y divide-white/10">
                 {assets.slice(0, 8).map((asset) => (
                   <tr key={asset.id}>
+                    <td className="px-3 py-2 text-slate-300">{asset.id}</td>
                     <td className="px-3 py-2 font-semibold text-white">{asset.name}</td>
                     <td className="px-3 py-2">{asset.address}</td>
                     <td className="px-3 py-2">{asset.region ?? "auto"}</td>
@@ -792,6 +932,47 @@ export function LegacyImportConsole() {
           Uses Google API keys to fetch Street View imagery around your asset registry and
           run camera detection before scoring.
         </p>
+        <div className="mt-3 rounded-lg border border-white/10 bg-slate-900/50 p-3">
+          <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+            Multi-agent targeting
+          </p>
+          <p className="mt-1 text-xs text-slate-400">
+            Set specific asset IDs so each agent maps only its assigned locations.
+          </p>
+          <input
+            type="text"
+            value={googleAssetIdFilter}
+            onChange={(event) => setGoogleAssetIdFilter(event.target.value)}
+            className="mt-2 w-full rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="asset-id-1,asset-id-2,... (optional: leave blank for all)"
+          />
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={2}
+              max={20}
+              value={agentBatchCount}
+              onChange={(event) => setAgentBatchCount(Number(event.target.value || 4))}
+              className="w-28 rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            />
+            <button
+              type="button"
+              onClick={() => buildAgentPlans(agentBatchCount)}
+              disabled={loading}
+              className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/5 disabled:opacity-60"
+            >
+              Generate Agent Batches
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleGoogleMarkerBatchExport()}
+              disabled={loading}
+              className="rounded-lg border border-violet-300/40 bg-violet-300/20 px-3 py-2 text-xs font-semibold text-violet-100 transition hover:bg-violet-300/30 disabled:opacity-60"
+            >
+              Download Surveillance File (Current Filter)
+            </button>
+          </div>
+        </div>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <input
             type="number"
@@ -841,6 +1022,45 @@ export function LegacyImportConsole() {
         >
           Import Google Street View
         </button>
+        {agentPlans.length > 0 ? (
+          <div className="mt-4 space-y-2">
+            <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
+              Generated agent location batches
+            </p>
+            {agentPlans.map((plan) => (
+              <div
+                key={plan.id}
+                className="rounded-lg border border-white/10 bg-slate-900/50 p-3"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-white">
+                    {plan.label} · {plan.assetIds.length} assets
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setGoogleAssetIdFilter(plan.assetIds.join(","))}
+                      className="rounded-lg border border-white/15 bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-white/5"
+                    >
+                      Use This Batch
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleGoogleMarkerBatchExport(plan.assetIds)}
+                      disabled={loading}
+                      className="rounded-lg border border-cyan-300/40 bg-cyan-300/20 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition hover:bg-cyan-300/30 disabled:opacity-60"
+                    >
+                      Download Batch File
+                    </button>
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-slate-400 break-all">
+                  {plan.assetIds.join(",")}
+                </p>
+              </div>
+            ))}
+          </div>
+        ) : null}
       </div>
 
       <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">

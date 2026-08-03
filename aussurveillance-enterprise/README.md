@@ -29,7 +29,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - `POST /api/v1/import/firestore-markers`
 - `POST /api/v1/import/live-aus-surveillance` (one-click live pull)
 - `POST /api/v1/import/official-state-feeds` (NSW/QLD/VIC/SA/WA/ACT)
-- `POST /api/v1/import/google-streetview` (authorized Google imagery pipeline)
+- `POST /api/v1/import/google-streetview` (authorized Google imagery pipeline; supports `assetIds` and `outputMode: "markers"` for agent batch files)
 - `GET /api/v1/assets?tenantId=<id>`
 - `POST /api/v1/assets`
 - `GET /api/v1/reports/executive?tenantId=<id>&format=markdown`
@@ -50,6 +50,7 @@ This application demonstrates the transformation from a camera mapping concept i
 - underwriting decision mix (approve/conditional/refer/decline)
 - exportable executive report generation
 - authorized Google Street View ingestion with vision-based camera detection
+- multi-agent location batching via asset ID assignment and surveillance JSON exports
 - workspace-scoped import history
 - audited API actions
 - rate limiting on high-cost endpoints
@@ -108,6 +109,10 @@ For local dev convenience, you may set:
 Google authorized import requires:
 - `GOOGLE_MAPS_API_KEY`
 - `GOOGLE_VISION_API_KEY` (recommended; falls back to maps key if omitted)
+
+For multi-agent collection, assign each worker a separate `assetIds` slice and call:
+- `POST /api/v1/import/google-streetview` with `outputMode: "markers"` to export surveillance JSON
+- then re-import merged/single batch files through `/migration` legacy marker upload
 
 ### Production security notes
 

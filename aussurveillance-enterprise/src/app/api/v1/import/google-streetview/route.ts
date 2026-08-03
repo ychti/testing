@@ -28,6 +28,9 @@ interface GoogleStreetViewImportPayload {
   pitch?: unknown;
   detectionThreshold?: unknown;
   assetMatchRadiusKm?: unknown;
+  assetIds?: unknown;
+  outputMode?: unknown;
+  batchLabel?: unknown;
 }
 
 function allowPublicImport(): boolean {
@@ -87,6 +90,29 @@ export async function POST(request: Request) {
         { status: 400 },
       );
     }
+    const assetIds = Array.isArray(payload.assetIds)
+      ? payload.assetIds
+          .map((item) => String(item ?? "").trim())
+          .filter((item) => item.length > 0)
+      : typeof payload.assetIds === "string"
+        ? payload.assetIds
+            .split(",")
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+        : [];
+    const selectedAssets =
+      assetIds.length > 0
+        ? assets.filter((asset) => assetIds.includes(asset.id))
+        : assets;
+    if (selectedAssets.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No assets matched requested assetIds. Provide valid asset IDs from your tenant asset registry.",
+        },
+        { status: 400 },
+      );
+    }
 
     const headings = Array.isArray(payload.headings)
       ? payload.headings
@@ -94,7 +120,7 @@ export async function POST(request: Request) {
           .filter((item) => Number.isFinite(item))
       : undefined;
     const collected = await importAuthorizedGoogleStreetView({
-      assets,
+      assets: selectedAssets,
       maxAssets: Number(payload.maxAssets ?? 250),
       headings,
       radiusMeters: Number(payload.radiusMeters ?? 120),
@@ -102,6 +128,15 @@ export async function POST(request: Request) {
       pitch: Number(payload.pitch ?? 0),
       detectionThreshold: Number(payload.detectionThreshold ?? 0.72),
     });
+    const outputMode =
+      typeof payload.outputMode === "string" &&
+      payload.outputMode.toLowerCase() === "markers"
+        ? "markers"
+        : "import";
+    const batchLabel =
+      typeof payload.batchLabel === "string" && payload.batchLabel.trim().length > 0
+        ? payload.batchLabel.trim()
+        : `google-batch-${new Date().toISOString().slice(0, 19)}`;
     if (collected.markers.length === 0) {
       return NextResponse.json(
         {
@@ -113,10 +148,38 @@ export async function POST(request: Request) {
         { status: 422 },
       );
     }
+    if (outputMode === "markers") {
+      await logAuditEvent({
+        action: "collect.google-streetview",
+        status: "success",
+        actorId: auth.actorId,
+        actorEmail: auth.actorEmail,
+        tenant: tenantId,
+        authMethod: auth.authMethod,
+        request,
+        details: {
+          tenantId,
+          mode: "markers",
+          assetCount: selectedAssets.length,
+          markersGenerated: collected.diagnostics.markersGenerated,
+          batchLabel,
+        },
+      });
+      return NextResponse.json({
+        tenantId,
+        mode: "markers",
+        batchLabel,
+        collectedAt: new Date().toISOString(),
+        selectedAssetIds: selectedAssets.map((asset) => asset.id),
+        google: collected.diagnostics,
+        warnings: collected.warnings,
+        markers: collected.markers,
+      });
+    }
 
     const assetMatchRadiusKm = Number(payload.assetMatchRadiusKm ?? 0.5);
     const migrated = migrateLegacyMarkersToPortfolio(collected.markers, {
-      assets,
+      assets: selectedAssets,
       assetMatchRadiusKm: Number.isFinite(assetMatchRadiusKm)
         ? Math.min(Math.max(assetMatchRadiusKm, 0.2), 5)
         : 0.5,
@@ -146,6 +209,8 @@ export async function POST(request: Request) {
         runId: run.id,
         tenantId,
         maxAssets: Number(payload.maxAssets ?? 250),
+        selectedAssets: selectedAssets.length,
+        mode: "import",
         markersGenerated: collected.diagnostics.markersGenerated,
       },
     });

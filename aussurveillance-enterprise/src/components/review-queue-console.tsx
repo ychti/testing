@@ -22,6 +22,23 @@ interface LegacyMarkerShape {
     confidenceScore?: number | null;
     confidenceBand?: string | null;
   } | null;
+  provenance?: {
+    preview?: {
+      heading?: number;
+      radiusMeters?: number;
+      fov?: number;
+      pitch?: number;
+    };
+    aiEvidence?: {
+      model?: string;
+      score?: number;
+      threshold?: number;
+      sourceMatches?: string[];
+      objectHits?: Array<{ description?: string; score?: number }>;
+      labelHits?: Array<{ description?: string; score?: number }>;
+      webHits?: Array<{ description?: string; score?: number }>;
+    };
+  } | null;
 }
 
 interface ReviewCandidate {
@@ -358,9 +375,27 @@ export function ReviewQueueConsole() {
     ? `https://www.google.com/maps?q=${candidate.marker.lat},${candidate.marker.lng}`
     : "";
   const confidence = candidate?.marker.quality?.confidenceScore;
+  const evidence = candidate?.marker.provenance?.aiEvidence;
+  const previewSettings = candidate?.marker.provenance?.preview;
   const previewHeading =
-    candidate && Number.isFinite(candidate.marker.direction)
-      ? Math.round(candidate.marker.direction ?? 0)
+    candidate &&
+    Number.isFinite(
+      previewSettings?.heading ?? candidate.marker.direction ?? Number.NaN,
+    )
+      ? Math.round(previewSettings?.heading ?? candidate.marker.direction ?? 0)
+      : 0;
+  const previewRadius =
+    candidate &&
+    Number.isFinite(previewSettings?.radiusMeters ?? Number.NaN)
+      ? Math.max(Math.min(Math.round(previewSettings?.radiusMeters ?? 350), 1000), 5)
+      : 350;
+  const previewFov =
+    candidate && Number.isFinite(previewSettings?.fov ?? Number.NaN)
+      ? Math.max(Math.min(Math.round(previewSettings?.fov ?? 90), 120), 15)
+      : 90;
+  const previewPitch =
+    candidate && Number.isFinite(previewSettings?.pitch ?? Number.NaN)
+      ? Math.max(Math.min(Math.round(previewSettings?.pitch ?? 0), 60), -60)
       : 0;
   const previewUnavailable = Boolean(
     candidate && previewBrokenCandidateId === candidate.id,
@@ -372,7 +407,11 @@ export function ReviewQueueConsole() {
         String(candidate.marker.lng),
       )}&heading=${encodeURIComponent(
         String(previewHeading),
-      )}&radius=350&t=${encodeURIComponent(candidate.id)}`
+      )}&radius=${encodeURIComponent(
+        String(previewRadius),
+      )}&fov=${encodeURIComponent(String(previewFov))}&pitch=${encodeURIComponent(
+        String(previewPitch),
+      )}&t=${encodeURIComponent(candidate.id)}`
     : "";
 
   return (
@@ -587,8 +626,71 @@ export function ReviewQueueConsole() {
                 </div>
               )}
               <p className="text-xs text-slate-400">
-                Heading {previewHeading}°, radius 350m. Use map link for full context.
+                Heading {previewHeading}°, radius {previewRadius}m, FOV {previewFov}°, pitch{" "}
+                {previewPitch}°. Use map link for full context.
               </p>
+              <div className="rounded-xl border border-white/10 bg-slate-900/60 p-3 text-xs text-slate-300">
+                <p className="font-semibold uppercase tracking-[0.12em] text-slate-200">
+                  AI evidence
+                </p>
+                <p className="mt-1">
+                  Model:{" "}
+                  <span className="text-white">
+                    {evidence?.model ?? "google-vision-label-object-web-v2"}
+                  </span>
+                </p>
+                <p className="mt-1">
+                  Score:{" "}
+                  <span className="font-semibold text-white">
+                    {typeof evidence?.score === "number"
+                      ? evidence.score.toFixed(3)
+                      : "n/a"}
+                  </span>{" "}
+                  (threshold{" "}
+                  {typeof evidence?.threshold === "number"
+                    ? evidence.threshold.toFixed(3)
+                    : "n/a"}
+                  )
+                </p>
+                <p className="mt-1">
+                  Matched sources:{" "}
+                  <span className="text-white">
+                    {Array.isArray(evidence?.sourceMatches) &&
+                    evidence.sourceMatches.length > 0
+                      ? evidence.sourceMatches.join(", ")
+                      : "none"}
+                  </span>
+                </p>
+                <div className="mt-2 space-y-1">
+                  <p>
+                    Objects:{" "}
+                    <span className="text-white">
+                      {(evidence?.objectHits ?? [])
+                        .slice(0, 2)
+                        .map((hit) => `${hit.description} (${Number(hit.score ?? 0).toFixed(2)})`)
+                        .join(", ") || "none"}
+                    </span>
+                  </p>
+                  <p>
+                    Labels:{" "}
+                    <span className="text-white">
+                      {(evidence?.labelHits ?? [])
+                        .slice(0, 2)
+                        .map((hit) => `${hit.description} (${Number(hit.score ?? 0).toFixed(2)})`)
+                        .join(", ") || "none"}
+                    </span>
+                  </p>
+                  <p>
+                    Web:{" "}
+                    <span className="text-white">
+                      {(evidence?.webHits ?? [])
+                        .slice(0, 2)
+                        .map((hit) => `${hit.description} (${Number(hit.score ?? 0).toFixed(2)})`)
+                        .join(", ") || "none"}
+                    </span>
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
         ) : (

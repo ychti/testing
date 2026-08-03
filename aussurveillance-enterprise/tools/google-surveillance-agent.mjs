@@ -201,9 +201,41 @@ async function fetchMetadata(url) {
   }
 }
 
-async function detectCameraScore(streetViewUrl, visionApiKey) {
+const CAMERA_TERMS = [
+  "camera",
+  "cctv",
+  "surveillance",
+  "security camera",
+  "traffic camera",
+  "speed camera",
+  "dome camera",
+];
+
+function hasCameraTerm(text) {
+  const normalized = String(text ?? "").toLowerCase();
+  return CAMERA_TERMS.some((term) => normalized.includes(term));
+}
+
+function topHits(items, max = 4) {
+  return items
+    .slice()
+    .sort((a, b) => Number(b.score ?? 0) - Number(a.score ?? 0))
+    .slice(0, max)
+    .map((item) => ({
+      description: String(item.description ?? item.name ?? ""),
+      score: Number(item.score ?? 0),
+    }));
+}
+
+async function detectCameraEvidence(streetViewUrl, visionApiKey) {
   if (!visionApiKey) {
-    return 0;
+    return {
+      score: 0,
+      sourceMatches: [],
+      labelHits: [],
+      objectHits: [],
+      webHits: [],
+    };
   }
   try {
     const imageResponse = await fetch(streetViewUrl, { cache: "no-store" });
@@ -221,7 +253,11 @@ async function detectCameraScore(streetViewUrl, visionApiKey) {
         requests: [
           {
             image: { content: imageBytes.toString("base64") },
-            features: [{ type: "LABEL_DETECTION", maxResults: 20 }],
+            features: [
+              { type: "LABEL_DETECTION", maxResults: 30 },
+              { type: "OBJECT_LOCALIZATION", maxResults: 20 },
+              { type: "WEB_DETECTION", maxResults: 10 },
+            ],
           },
         ],
       }),
@@ -230,20 +266,65 @@ async function detectCameraScore(streetViewUrl, visionApiKey) {
       return null;
     }
     const payload = await annotateResponse.json();
-    const labels = payload.responses?.[0]?.labelAnnotations ?? [];
-    const candidates = labels.filter((label) => {
-      const text = String(label.description ?? "").toLowerCase();
-      return (
-        text.includes("camera") ||
-        text.includes("cctv") ||
-        text.includes("surveillance") ||
-        text.includes("security camera")
-      );
-    });
-    if (candidates.length === 0) {
-      return 0;
+    const response = payload.responses?.[0];
+    if (!response || response.error) {
+      return null;
     }
-    return candidates.reduce((best, label) => Math.max(best, Number(label.score ?? 0)), 0);
+
+    const labels = Array.isArray(response.labelAnnotations) ? response.labelAnnotations : [];
+    const objects = Array.isArray(response.localizedObjectAnnotations)
+      ? response.localizedObjectAnnotations
+      : [];
+    const webEntities = Array.isArray(response.webDetection?.webEntities)
+      ? response.webDetection.webEntities
+      : [];
+
+    const labelHits = labels.filter((item) => hasCameraTerm(item.description));
+    const objectHits = objects.filter((item) => hasCameraTerm(item.name));
+    const webHits = webEntities.filter((item) => hasCameraTerm(item.description));
+
+    const labelScore = labelHits.reduce(
+      (best, item) => Math.max(best, Number(item.score ?? 0)),
+      0,
+    );
+    const objectScore = objectHits.reduce(
+      (best, item) => Math.max(best, Number(item.score ?? 0)),
+      0,
+    );
+    const webScore = webHits.reduce(
+      (best, item) => Math.max(best, Number(item.score ?? 0)),
+      0,
+    );
+
+    const sourceMatches = [
+      objectHits.length > 0 ? "object" : null,
+      labelHits.length > 0 ? "label" : null,
+      webHits.length > 0 ? "web" : null,
+    ].filter((item) => Boolean(item));
+
+    if (sourceMatches.length === 0) {
+      return {
+        score: 0,
+        sourceMatches: [],
+        labelHits: [],
+        objectHits: [],
+        webHits: [],
+      };
+    }
+
+    const weighted =
+      objectScore * 0.58 +
+      labelScore * 0.27 +
+      webScore * 0.15 +
+      (sourceMatches.length >= 2 ? 0.08 : 0);
+
+    return {
+      score: clamp(weighted, 0, 0.99),
+      sourceMatches,
+      labelHits: topHits(labelHits),
+      objectHits: topHits(objectHits),
+      webHits: topHits(webHits),
+    };
   } catch {
     return null;
   }
@@ -264,6 +345,10 @@ function markerFromObservation(detection, mode) {
     mode === "detected"
       ? `Detected via standalone Google surveillance agent (${detection.asset.name}).`
       : `Uncertain candidate from Google Street View (${detection.asset.name}); send to human verification queue.`;
+  const evidenceSummary =
+    detection.evidence && detection.evidence.sourceMatches.length > 0
+      ? `AI evidence: ${detection.evidence.sourceMatches.join(", ")}`
+      : "AI evidence: no direct camera signal";
   return {
     id: `google-${detection.asset.id}-${detection.heading}-${suffix}`,
     lat: detection.lat,
@@ -275,7 +360,7 @@ function markerFromObservation(detection, mode) {
         : "google-streetview-candidate",
     verified: mode === "detected" && detection.score >= detection.threshold + 0.08,
     userId: "google-surveillance-agent",
-    notes: note,
+    notes: `${note} ${evidenceSummary}.`,
     cctvMode: "directional",
     direction: detection.heading,
     createdAt: new Date().toISOString(),
@@ -289,6 +374,21 @@ function markerFromObservation(detection, mode) {
       captureMethod: "google-streetview-agent-cli",
       appSurface: "standalone-agent",
       actorType: "authenticated",
+      preview: {
+        heading: detection.heading,
+        radiusMeters: detection.radiusMeters,
+        fov: detection.fov,
+        pitch: detection.pitch,
+      },
+      aiEvidence: {
+        model: "google-vision-label-object-web-v2",
+        score: Number(detection.score ?? 0),
+        threshold: Number(detection.threshold ?? 0),
+        sourceMatches: detection.evidence?.sourceMatches ?? [],
+        objectHits: detection.evidence?.objectHits ?? [],
+        labelHits: detection.evidence?.labelHits ?? [],
+        webHits: detection.evidence?.webHits ?? [],
+      },
     },
   };
 }
@@ -414,7 +514,7 @@ async function main() {
         continue;
       }
       hasImagery = true;
-      const score = await detectCameraScore(
+      const evidence = await detectCameraEvidence(
         imageUrl({
           lat: asset.lat,
           lng: asset.lng,
@@ -426,9 +526,10 @@ async function main() {
         }),
         visionApiKey,
       );
-      if (score === null) {
+      if (evidence === null) {
         visionErrors += 1;
       }
+      const score = evidence?.score ?? 0;
       if (score === null || score < threshold) {
         if (emitUncertain) {
           markers.push(
@@ -441,6 +542,10 @@ async function main() {
                 lat: metadata.location?.lat ?? asset.lat,
                 lng: metadata.location?.lng ?? asset.lng,
                 uncertainScore,
+                evidence,
+                radiusMeters,
+                fov,
+                pitch,
               },
               "uncertain",
             ),
@@ -460,6 +565,10 @@ async function main() {
             lat: metadata.location?.lat ?? asset.lat,
             lng: metadata.location?.lng ?? asset.lng,
             uncertainScore,
+            evidence,
+            radiusMeters,
+            fov,
+            pitch,
           },
           "detected",
         ),

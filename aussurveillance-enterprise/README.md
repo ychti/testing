@@ -126,6 +126,8 @@ npm run surveillance:agent -- \
 npm run surveillance:merge -- --out ./surveillance-merged.json ./surveillance-batch-*.json
 ```
 
+`--plan-only` does not require Google API keys; collection runs do.
+
 Then upload merged/single batch JSON files through `/migration` legacy marker upload.
 
 Detailed runbook: `docs/standalone-surveillance-agent.md`

@@ -266,15 +266,24 @@ async function main() {
     process.exit(args.help ? 0 : 1);
   }
 
-  const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
-  if (!mapsApiKey) {
-    throw new Error("GOOGLE_MAPS_API_KEY is required.");
-  }
-  const visionApiKey = process.env.GOOGLE_VISION_API_KEY?.trim() || "";
-
   const assetsPath = path.resolve(String(args.assets));
-  const rawCsv = await readFile(assetsPath, "utf8");
+  let rawCsv = "";
+  try {
+    rawCsv = await readFile(assetsPath, "utf8");
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      throw new Error(
+        `Assets CSV not found at ${assetsPath}. Create it first or pass the correct --assets path.`,
+      );
+    }
+    throw error;
+  }
   let assets = parseAssetsCsv(rawCsv);
+  if (assets.length === 0) {
+    throw new Error(
+      "No valid assets parsed. CSV must include at least id,name,lat,lng columns.",
+    );
+  }
 
   const explicitAssetIds = String(args["asset-ids"] ?? "")
     .split(",")
@@ -302,6 +311,12 @@ async function main() {
     console.log(JSON.stringify({ assetsTotal: assets.length, batches: batchPreview }, null, 2));
     return;
   }
+
+  const mapsApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
+  if (!mapsApiKey) {
+    throw new Error("GOOGLE_MAPS_API_KEY is required.");
+  }
+  const visionApiKey = process.env.GOOGLE_VISION_API_KEY?.trim() || "";
 
   const headings = parseHeadings(args.headings);
   const radiusMeters = clamp(Number(args["radius-meters"] ?? 120), 5, 500);

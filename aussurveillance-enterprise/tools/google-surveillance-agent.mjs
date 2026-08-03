@@ -21,6 +21,8 @@ Options:
   --fov <n>                       Field of view 15-120 (default: 90)
   --pitch <n>                     Pitch -60 to 60 (default: 0)
   --threshold <0-1>               Detection threshold (default: 0.72)
+  --emit-uncertain                Emit low-confidence candidates when imagery exists
+  --uncertain-score <0-1>         Base confidence for uncertain candidates (default: 0.42)
   --label <name>                  Batch label in output metadata
   --plan-only                     Print batch assignment plan only and exit
 
@@ -247,24 +249,40 @@ async function detectCameraScore(streetViewUrl, visionApiKey) {
   }
 }
 
-function markersFromDetections(detection) {
+function markerFromObservation(detection, mode) {
+  const confidenceScore =
+    mode === "detected"
+      ? Math.round(clamp(0.45 + detection.score * 0.5, 0.01, 0.99) * 100)
+      : Math.round(clamp(detection.uncertainScore, 0.01, 0.99) * 100);
+  const confidenceBand =
+    confidenceScore >= 80 ? "high" : confidenceScore >= 62 ? "medium" : "low";
+  const suffix =
+    mode === "detected"
+      ? detection.score.toFixed(3)
+      : `uncertain-${confidenceScore}`;
+  const note =
+    mode === "detected"
+      ? `Detected via standalone Google surveillance agent (${detection.asset.name}).`
+      : `Uncertain candidate from Google Street View (${detection.asset.name}); send to human verification queue.`;
   return {
-    id: `google-${detection.asset.id}-${detection.heading}-${detection.score.toFixed(3)}`,
+    id: `google-${detection.asset.id}-${detection.heading}-${suffix}`,
     lat: detection.lat,
     lng: detection.lng,
     type: "cctv",
-    source: "google-streetview-authorized",
-    verified: detection.score >= detection.threshold + 0.08,
+    source:
+      mode === "detected"
+        ? "google-streetview-authorized"
+        : "google-streetview-candidate",
+    verified: mode === "detected" && detection.score >= detection.threshold + 0.08,
     userId: "google-surveillance-agent",
-    notes: `Detected via standalone Google surveillance agent (${detection.asset.name}).`,
+    notes: note,
     cctvMode: "directional",
     direction: detection.heading,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     quality: {
-      confidenceScore: Math.round(clamp(0.45 + detection.score * 0.5, 0.01, 0.99) * 100),
-      confidenceBand:
-        detection.score >= 0.8 ? "high" : detection.score >= 0.62 ? "medium" : "low",
+      confidenceScore,
+      confidenceBand,
       qualityVersion: 1,
     },
     provenance: {
@@ -350,6 +368,8 @@ async function main() {
   const fov = clamp(Number(args.fov ?? 90), 15, 120);
   const pitch = clamp(Number(args.pitch ?? 0), -60, 60);
   const threshold = clamp(Number(args.threshold ?? 0.72), 0.35, 0.98);
+  const emitUncertain = Boolean(args["emit-uncertain"]);
+  const uncertainScore = clamp(Number(args["uncertain-score"] ?? 0.42), 0.2, 0.7);
   const maxAssets = Math.max(Number(args["max-assets"] ?? 250), 1);
   const label =
     String(args.label ?? `batch-${batchIndex}-of-${batchCount}`).replace(
@@ -371,6 +391,8 @@ async function main() {
   let assetsWithImagery = 0;
   let assetsWithDetections = 0;
   let imagesAnalyzed = 0;
+  let visionErrors = 0;
+  let uncertainMarkersGenerated = 0;
 
   for (const asset of selectedAssets) {
     let hasImagery = false;
@@ -404,19 +426,43 @@ async function main() {
         }),
         visionApiKey,
       );
+      if (score === null) {
+        visionErrors += 1;
+      }
       if (score === null || score < threshold) {
+        if (emitUncertain) {
+          markers.push(
+            markerFromObservation(
+              {
+                asset,
+                heading,
+                score: Number.isFinite(score) ? score : 0,
+                threshold,
+                lat: metadata.location?.lat ?? asset.lat,
+                lng: metadata.location?.lng ?? asset.lng,
+                uncertainScore,
+              },
+              "uncertain",
+            ),
+          );
+          uncertainMarkersGenerated += 1;
+        }
         continue;
       }
       hasDetection = true;
       markers.push(
-        markersFromDetections({
-          asset,
-          heading,
-          score,
-          threshold,
-          lat: metadata.location?.lat ?? asset.lat,
-          lng: metadata.location?.lng ?? asset.lng,
-        }),
+        markerFromObservation(
+          {
+            asset,
+            heading,
+            score,
+            threshold,
+            lat: metadata.location?.lat ?? asset.lat,
+            lng: metadata.location?.lng ?? asset.lng,
+            uncertainScore,
+          },
+          "detected",
+        ),
       );
     }
     if (hasImagery) {
@@ -429,6 +475,11 @@ async function main() {
 
   if (markers.length === 0) {
     warnings.push("No markers reached threshold. Lower --threshold or increase --radius-meters.");
+  }
+  if (visionErrors > 0) {
+    warnings.push(
+      `Vision scored ${visionErrors} images as unavailable/error; run surveillance:doctor to inspect key/API access.`,
+    );
   }
 
   const output = {
@@ -444,6 +495,8 @@ async function main() {
       fov,
       pitch,
       threshold,
+      emitUncertain,
+      uncertainScore,
     },
     diagnostics: {
       assetsRequested: assets.length,
@@ -451,6 +504,8 @@ async function main() {
       assetsWithImagery,
       assetsWithDetections,
       imagesAnalyzed,
+      visionErrors,
+      uncertainMarkersGenerated,
       markersGenerated: markers.length,
     },
     selectedAssetIds: selectedAssets.map((asset) => asset.id),
@@ -464,7 +519,7 @@ async function main() {
   await writeFile(outputPath, JSON.stringify(output, null, 2), "utf8");
   console.log(`Saved output to ${outputPath}`);
   console.log(
-    `Diagnostics: assets=${selectedAssets.length}, imagery=${assetsWithImagery}, detections=${assetsWithDetections}, markers=${markers.length}, images=${imagesAnalyzed}`,
+    `Diagnostics: assets=${selectedAssets.length}, imagery=${assetsWithImagery}, detections=${assetsWithDetections}, uncertain=${uncertainMarkersGenerated}, markers=${markers.length}, images=${imagesAnalyzed}`,
   );
   if (warnings.length > 0) {
     console.log("Warnings:");

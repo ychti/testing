@@ -131,6 +131,17 @@ npm run surveillance:agent -- \
   --threshold 0.72 \
   --out ./surveillance-batch-2.json
 
+# If detections are too strict, emit uncertain candidates for human review
+GOOGLE_API_KEY=... npm run surveillance:agent -- \
+  --assets ./assets.csv \
+  --batch-count 6 \
+  --batch-index 2 \
+  --radius-meters 350 \
+  --threshold 0.55 \
+  --emit-uncertain \
+  --uncertain-score 0.42 \
+  --out ./surveillance-batch-2.json
+
 # Merge all worker outputs into one import file
 npm run surveillance:merge -- --out ./surveillance-merged.json ./surveillance-batch-*.json
 ```

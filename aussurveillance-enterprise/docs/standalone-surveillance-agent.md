@@ -65,6 +65,20 @@ npm run surveillance:agent -- \
   --out ./surveillance-batch-2.json
 ```
 
+If Vision is too strict and you want candidates for the human swipe queue, emit uncertain markers:
+
+```bash
+GOOGLE_API_KEY=... npm run surveillance:agent -- \
+  --assets ./assets.csv \
+  --batch-count 6 \
+  --batch-index 2 \
+  --radius-meters 350 \
+  --threshold 0.55 \
+  --emit-uncertain \
+  --uncertain-score 0.42 \
+  --out ./surveillance-batch-2.json
+```
+
 If you use one shared key, this is also valid:
 
 ```bash

@@ -20,7 +20,8 @@ export interface ImportRunRecord {
     | "legacy-file"
     | "firestore-admin"
     | "live-public"
-    | "official-state-feeds";
+    | "official-state-feeds"
+    | "google-streetview";
   authMode?: string;
   actorId: string;
   createdAt: string;

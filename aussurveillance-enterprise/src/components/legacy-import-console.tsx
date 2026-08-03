@@ -42,6 +42,16 @@ interface ImportResult {
     markerCount: number;
     error?: string;
   }>;
+  google?: {
+    assetsRequested: number;
+    assetsProcessed: number;
+    assetsWithImagery: number;
+    assetsWithDetections: number;
+    imagesAnalyzed: number;
+    markersGenerated: number;
+    detectionThreshold: number;
+    headingsEvaluated: number;
+  };
   coverage?: {
     totalMarkersAfterNormalization: number;
     duplicateMarkersCollapsed: number;
@@ -108,6 +118,10 @@ export function LegacyImportConsole() {
   const [stateFeedList, setStateFeedList] = useState<string>(
     "NSW,QLD,VIC,SA,WA,ACT",
   );
+  const [googleHeadings, setGoogleHeadings] = useState<string>("0,90,180,270");
+  const [googleRadiusMeters, setGoogleRadiusMeters] = useState<number>(120);
+  const [googleMaxAssets, setGoogleMaxAssets] = useState<number>(250);
+  const [googleDetectionThreshold, setGoogleDetectionThreshold] = useState<number>(0.72);
 
   async function fetchTenantsData(): Promise<TenantRecord[]> {
     const response = await fetch("/api/v1/tenants");
@@ -327,6 +341,58 @@ export function LegacyImportConsole() {
     } catch (error) {
       setStatus(
         `Official feed import failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      setResult(null);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleStreetViewImport = async () => {
+    if (!selectedTenantId) {
+      setStatus("Select a tenant before pulling Google Street View data.");
+      return;
+    }
+    if (assets.length === 0) {
+      setStatus("Import asset registry first so Google pull can target named sites.");
+      return;
+    }
+    setLoading(true);
+    setStatus("Pulling authorized Google Street View imagery and scoring detections...");
+    try {
+      const headings = googleHeadings
+        .split(",")
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value));
+      const response = await fetch("/api/v1/import/google-streetview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          tenantId: selectedTenantId,
+          maxAssets: googleMaxAssets,
+          headings,
+          radiusMeters: googleRadiusMeters,
+          detectionThreshold: googleDetectionThreshold,
+        }),
+      });
+      const payload = (await response.json()) as ImportResult | { error: string };
+      if (!response.ok) {
+        setStatus(
+          "Google Street View import failed: " +
+            ("error" in payload ? payload.error : "unknown error"),
+        );
+        setResult(null);
+        return;
+      }
+      const parsed = payload as ImportResult;
+      setResult(parsed);
+      setMarkerCount(parsed.ingestion.markersReceived);
+      setStatus("Google Street View import complete with verified detections.");
+    } catch (error) {
+      setStatus(
+        `Google Street View import failed: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
@@ -720,6 +786,65 @@ export function LegacyImportConsole() {
 
       <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
         <p className="text-sm font-semibold text-white">
+          Authorized Google Street View ingestion
+        </p>
+        <p className="mt-1 text-xs text-slate-400">
+          Uses Google API keys to fetch Street View imagery around your asset registry and
+          run camera detection before scoring.
+        </p>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <input
+            type="number"
+            min={1}
+            max={5000}
+            value={googleMaxAssets}
+            onChange={(event) => setGoogleMaxAssets(Number(event.target.value || 250))}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Max assets"
+          />
+          <input
+            type="number"
+            min={5}
+            max={500}
+            value={googleRadiusMeters}
+            onChange={(event) =>
+              setGoogleRadiusMeters(Number(event.target.value || 120))
+            }
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Radius meters"
+          />
+          <input
+            type="text"
+            value={googleHeadings}
+            onChange={(event) => setGoogleHeadings(event.target.value)}
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Headings e.g. 0,90,180,270"
+          />
+          <input
+            type="number"
+            step={0.01}
+            min={0.35}
+            max={0.98}
+            value={googleDetectionThreshold}
+            onChange={(event) =>
+              setGoogleDetectionThreshold(Number(event.target.value || 0.72))
+            }
+            className="rounded-lg border border-white/15 bg-slate-900 px-3 py-2 text-sm text-slate-200"
+            placeholder="Detection threshold"
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => void handleGoogleStreetViewImport()}
+          disabled={loading}
+          className="mt-3 rounded-lg bg-violet-300 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-violet-200 disabled:opacity-60"
+        >
+          Import Google Street View
+        </button>
+      </div>
+
+      <div className="rounded-xl border border-white/10 bg-slate-950/60 p-4">
+        <p className="text-sm font-semibold text-white">
           Official multi-state ingestion (verified source pull)
         </p>
         <p className="mt-1 text-xs text-slate-400">
@@ -892,6 +1017,52 @@ export function LegacyImportConsole() {
                     ))}
                   </tbody>
                 </table>
+              </div>
+            </div>
+          ) : null}
+
+          {result.google ? (
+            <div className="rounded-xl border border-white/10 bg-slate-950/65 p-4">
+              <h3 className="text-sm font-semibold uppercase tracking-[0.14em] text-slate-300">
+                Google detection diagnostics
+              </h3>
+              <div className="mt-3 grid gap-2 text-sm text-slate-200 md:grid-cols-2">
+                <p>
+                  Assets processed:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.assetsProcessed}/{result.google.assetsRequested}
+                  </span>
+                </p>
+                <p>
+                  Assets with imagery:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.assetsWithImagery}
+                  </span>
+                </p>
+                <p>
+                  Assets with detections:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.assetsWithDetections}
+                  </span>
+                </p>
+                <p>
+                  Images analyzed:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.imagesAnalyzed}
+                  </span>
+                </p>
+                <p>
+                  Markers generated:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.markersGenerated}
+                  </span>
+                </p>
+                <p>
+                  Detection threshold:{" "}
+                  <span className="font-semibold text-white">
+                    {result.google.detectionThreshold}
+                  </span>
+                </p>
               </div>
             </div>
           ) : null}

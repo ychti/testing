@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import { formatDateTime } from "@/lib/format";
 
 interface TenantRecord {
@@ -67,7 +68,7 @@ export function ReviewQueueConsole() {
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [status, setStatus] = useState("Loading review queue...");
   const [uploadLabel, setUploadLabel] = useState("No file selected yet.");
-  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewBrokenCandidateId, setPreviewBrokenCandidateId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [reviewerNote, setReviewerNote] = useState("");
   const [sourceLabel, setSourceLabel] = useState("google-surveillance-batch");
@@ -190,10 +191,6 @@ export function ReviewQueueConsole() {
       window.clearTimeout(timer);
     };
   }, [selectedTenantId]);
-
-  useEffect(() => {
-    setPreviewError(null);
-  }, [candidate?.id, selectedTenantId]);
 
   async function handleUploadFile(file: File) {
     const fallbackTenantId =
@@ -366,6 +363,9 @@ export function ReviewQueueConsole() {
     candidate && Number.isFinite(candidate.marker.direction)
       ? Math.round(candidate.marker.direction ?? 0)
       : 0;
+  const previewUnavailable = Boolean(
+    candidate && previewBrokenCandidateId === candidate.id,
+  );
   const previewUrl = candidate
     ? `/api/v1/review-candidates/preview?lat=${encodeURIComponent(
         String(candidate.marker.lat),
@@ -569,20 +569,24 @@ export function ReviewQueueConsole() {
               <p className="text-xs uppercase tracking-[0.14em] text-slate-400">
                 Street View preview
               </p>
-              {!previewError ? (
-                <img
+              {!previewUnavailable ? (
+                <Image
                   src={previewUrl}
                   alt="Candidate Street View preview"
+                  width={640}
+                  height={640}
+                  unoptimized
                   className="h-72 w-full rounded-xl border border-white/10 bg-slate-900 object-cover"
                   onError={() =>
-                    setPreviewError(
-                      "Preview unavailable. Add GOOGLE_MAPS_API_KEY (or GOOGLE_API_KEY) to .env.local and restart dev server.",
-                    )
+                    setPreviewBrokenCandidateId(candidate.id)
                   }
                 />
               ) : (
                 <div className="grid h-72 w-full place-items-center rounded-xl border border-amber-300/30 bg-amber-300/10 p-4 text-center text-xs text-amber-100">
-                  <p>{previewError}</p>
+                  <p>
+                    Preview unavailable. Add GOOGLE_MAPS_API_KEY (or GOOGLE_API_KEY) to
+                    .env.local and restart dev server.
+                  </p>
                 </div>
               )}
               <p className="text-xs text-slate-400">

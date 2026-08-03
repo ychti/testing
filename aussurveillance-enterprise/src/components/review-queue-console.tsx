@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import { formatDateTime } from "@/lib/format";
 
 interface TenantRecord {
@@ -570,12 +569,10 @@ export function ReviewQueueConsole() {
                 Street View preview
               </p>
               {!previewUnavailable ? (
-                <Image
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
                   src={previewUrl}
                   alt="Candidate Street View preview"
-                  width={640}
-                  height={640}
-                  unoptimized
                   className="h-72 w-full rounded-xl border border-white/10 bg-slate-900 object-cover"
                   onError={() =>
                     setPreviewBrokenCandidateId(candidate.id)

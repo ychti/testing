@@ -83,7 +83,11 @@ export function ReviewQueueConsole() {
       | { tenants: TenantRecord[] }
       | { error?: string };
     if (!response.ok || !("tenants" in payload)) {
-      throw new Error(payload.error ?? "Failed to load tenants.");
+      throw new Error(
+        ("error" in payload && typeof payload.error === "string"
+          ? payload.error
+          : "Failed to load tenants."),
+      );
     }
     setTenants(payload.tenants);
     const persisted =

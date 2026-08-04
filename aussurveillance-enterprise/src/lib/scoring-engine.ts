@@ -36,6 +36,7 @@ export interface SiteScore {
   observationCount: number;
   estimatedMonthlyExposureAud: number;
   recommendedActions: string[];
+  underwriting?: UnderwritingDecision;
 }
 
 export interface PortfolioSummary {
@@ -47,7 +48,21 @@ export interface PortfolioSummary {
   protectedSites: number;
   totalSites: number;
   estimatedMonthlyExposureAud: number;
+  underwriting?: {
+    approve: number;
+    conditional: number;
+    refer: number;
+    decline: number;
+  };
   sites: SiteScore[];
+}
+
+export interface UnderwritingDecision {
+  decision: "approve" | "conditional" | "refer" | "decline";
+  premiumAdjustmentPct: number;
+  inspectionPriority: "routine" | "elevated" | "urgent" | "critical";
+  rationale: string[];
+  requiredControls: string[];
 }
 
 function clamp(value: number, min = 0, max = 1): number {
@@ -99,6 +114,60 @@ function weightedAverage(
   return numerator / denominator;
 }
 
+function numericEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : fallback;
+}
+
+interface ExposureCalibration {
+  baseLossRate: number;
+  riskSlope: number;
+  confidencePenaltySlope: number;
+  freshnessPenaltySlope: number;
+}
+
+function exposureCalibration(): ExposureCalibration {
+  return {
+    baseLossRate: numericEnv("EXPOSURE_BASE_LOSS_RATE", 0.0048),
+    riskSlope: numericEnv("EXPOSURE_RISK_SLOPE", 0.0265),
+    confidencePenaltySlope: numericEnv("EXPOSURE_CONFIDENCE_PENALTY", 0.42),
+    freshnessPenaltySlope: numericEnv("EXPOSURE_FRESHNESS_PENALTY", 0.28),
+  };
+}
+
+function segmentExposureMultiplier(segment: ScoringSite["segment"]): number {
+  if (segment === "logistics") {
+    return 1.18;
+  }
+  if (segment === "healthcare") {
+    return 1.12;
+  }
+  if (segment === "education") {
+    return 0.92;
+  }
+  return 1;
+}
+
+function estimateMonthlyExposureAud(input: {
+  site: ScoringSite;
+  combinedRisk: number;
+  confidence: number;
+  freshness: number;
+}): number {
+  const calibration = exposureCalibration();
+  const confidencePenalty =
+    1 + (1 - clamp(input.confidence)) * calibration.confidencePenaltySlope;
+  const freshnessPenalty =
+    1 + (1 - clamp(input.freshness)) * calibration.freshnessPenaltySlope;
+  const rate =
+    calibration.baseLossRate +
+    clamp(input.combinedRisk) * calibration.riskSlope * confidencePenalty * freshnessPenalty;
+  const exposure =
+    input.site.insuredValueAud * rate * segmentExposureMultiplier(input.site.segment);
+  return Math.max(Math.round(exposure), 0);
+}
+
 function riskTier(score: number): SiteScore["riskTier"] {
   if (score >= 80) {
     return "low";
@@ -130,6 +199,78 @@ function recommendationList(site: SiteScore): string[] {
     recommendations.push("Maintain current controls and monitor weekly drift.");
   }
   return recommendations;
+}
+
+function underwritingDecision(site: SiteScore): UnderwritingDecision {
+  let decision: UnderwritingDecision["decision"] = "approve";
+  if (site.riskScore < 40 || site.coverageScore < 35) {
+    decision = "decline";
+  } else if (
+    site.riskScore < 56 ||
+    site.confidenceScore < 60 ||
+    site.freshnessScore < 58
+  ) {
+    decision = "refer";
+  } else if (site.riskScore < 72 || site.blindSpotIndex > 32) {
+    decision = "conditional";
+  }
+
+  const premiumAdjustmentPct = Math.round(
+    clamp(
+      ((70 - site.riskScore) * 0.46 +
+        (68 - site.confidenceScore) * 0.12 +
+        (66 - site.freshnessScore) * 0.1 +
+        Math.max(site.blindSpotIndex - 24, 0) * 0.24 +
+        (decision === "decline" ? 20 : decision === "refer" ? 10 : 0)) /
+        100,
+      -0.2,
+      0.95,
+    ) * 100,
+  );
+
+  const requiredControls: string[] = [];
+  if (site.coverageScore < 72) {
+    requiredControls.push("Perimeter and ingress overlap camera upgrade.");
+  }
+  if (site.blindSpotIndex > 30) {
+    requiredControls.push("Blind-spot remediation blueprint with install milestones.");
+  }
+  if (site.freshnessScore < 65) {
+    requiredControls.push("30-day re-verification evidence package.");
+  }
+  if (site.confidenceScore < 67) {
+    requiredControls.push("Independent integrator audit for camera quality assurance.");
+  }
+  if (requiredControls.length === 0) {
+    requiredControls.push("Maintain current controls and keep quarterly verification cadence.");
+  }
+
+  const rationale = [
+    `Risk ${site.riskScore}/100 with coverage ${site.coverageScore}/100 and blind-spot index ${site.blindSpotIndex}/100.`,
+    `Confidence ${site.confidenceScore}/100 and freshness ${site.freshnessScore}/100 drive evidentiary trust for underwriting.`,
+  ];
+  if (site.trendDelta < -4) {
+    rationale.push("Coverage trend is deteriorating versus prior observation window.");
+  } else if (site.trendDelta > 4) {
+    rationale.push("Coverage trend is improving versus prior observation window.");
+  }
+
+  let inspectionPriority: UnderwritingDecision["inspectionPriority"] = "routine";
+  if (decision === "decline") {
+    inspectionPriority = "critical";
+  } else if (decision === "refer") {
+    inspectionPriority = "urgent";
+  } else if (decision === "conditional") {
+    inspectionPriority = "elevated";
+  }
+
+  return {
+    decision,
+    premiumAdjustmentPct,
+    inspectionPriority,
+    rationale,
+    requiredControls,
+  };
 }
 
 function trendDeltaForObservations(
@@ -228,8 +369,12 @@ export function scoreSite(
     .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
 
   const trendDelta = trendDeltaForObservations(siteObservations, asOf);
-  const baseExposure = site.insuredValueAud * (combinedRisk * 0.027 + 0.005);
-  const exposure = Math.round(baseExposure);
+  const exposure = estimateMonthlyExposureAud({
+    site,
+    combinedRisk,
+    confidence: weightedConfidence,
+    freshness: weightedFreshness,
+  });
 
   const siteScore: SiteScore = {
     site,
@@ -244,8 +389,16 @@ export function scoreSite(
     observationCount: siteObservations.length,
     estimatedMonthlyExposureAud: exposure,
     recommendedActions: [],
+    underwriting: {
+      decision: "refer",
+      premiumAdjustmentPct: 0,
+      inspectionPriority: "routine",
+      rationale: [],
+      requiredControls: [],
+    },
   };
   siteScore.recommendedActions = recommendationList(siteScore);
+  siteScore.underwriting = underwritingDecision(siteScore);
   return siteScore;
 }
 
@@ -277,6 +430,14 @@ export function buildPortfolioSummary(
     (sum, site) => sum + site.estimatedMonthlyExposureAud,
     0,
   );
+  const underwriting = scoredSites.reduce(
+    (summary, site) => {
+      const decision = site.underwriting?.decision ?? "refer";
+      summary[decision] += 1;
+      return summary;
+    },
+    { approve: 0, conditional: 0, refer: 0, decline: 0 },
+  );
 
   return {
     asOf: asOf.toISOString(),
@@ -287,6 +448,7 @@ export function buildPortfolioSummary(
     protectedSites: scoredSites.length - atRiskSites,
     totalSites: scoredSites.length,
     estimatedMonthlyExposureAud: totalExposure,
+    underwriting,
     sites: scoredSites,
   };
 }

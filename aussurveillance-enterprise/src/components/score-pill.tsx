@@ -1,4 +1,4 @@
-import type { SiteScore } from "@/lib/security-intelligence";
+import type { SiteScore } from "@/lib/scoring-engine";
 
 const tierClasses: Record<SiteScore["riskTier"], string> = {
   low: "bg-emerald-400/20 text-emerald-200 border-emerald-300/30",

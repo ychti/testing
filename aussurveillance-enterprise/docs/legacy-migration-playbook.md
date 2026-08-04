@@ -23,11 +23,32 @@ The import API accepts:
 
 ```bash
 curl -X POST http://localhost:3000/api/v1/import/legacy-markers \
+  -H "authorization: Bearer <api-key>" \
   -H "content-type: application/json" \
-  -d @markers-export.json
+  -d '{"tenantId":"tenant-default","markers":[...]}'
 ```
 
 Or use the web operator flow at `/migration`.
+
+### Direct Firestore pipeline
+
+If server credentials are configured, trigger server-side import:
+
+```bash
+curl -X POST http://localhost:3000/api/v1/import/firestore-markers \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"tenant-default","limit":10000}'
+```
+
+### One-click live pull (no file export)
+
+```bash
+curl -X POST http://localhost:3000/api/v1/import/live-aus-surveillance \
+  -H "authorization: Bearer <api-key>" \
+  -H "content-type: application/json" \
+  -d '{"tenantId":"tenant-default","limit":10000}'
+```
 
 ## 3) Validate conversion output
 

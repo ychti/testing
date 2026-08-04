@@ -1,5 +1,5 @@
 import { formatCurrencyAud, formatDateTime } from "@/lib/format";
-import type { SiteScore } from "@/lib/security-intelligence";
+import type { SiteScore } from "@/lib/scoring-engine";
 import { ScorePill } from "./score-pill";
 
 export function SiteRiskTable({ rows }: { rows: SiteScore[] }) {
@@ -10,6 +10,7 @@ export function SiteRiskTable({ rows }: { rows: SiteScore[] }) {
           <tr>
             <th className="px-4 py-3">Site</th>
             <th className="px-4 py-3">Risk score</th>
+            <th className="px-4 py-3">Underwriting</th>
             <th className="px-4 py-3">Confidence</th>
             <th className="px-4 py-3">Freshness</th>
             <th className="px-4 py-3">Exposure / month</th>
@@ -27,6 +28,16 @@ export function SiteRiskTable({ rows }: { rows: SiteScore[] }) {
               </td>
               <td className="px-4 py-3">
                 <ScorePill value={item.riskScore} tier={item.riskTier} />
+              </td>
+              <td className="px-4 py-3">
+                <p className="font-semibold text-white">
+                  {item.underwriting?.decision ?? "refer"}
+                </p>
+                <p className="text-xs text-slate-400">
+                  {(item.underwriting?.premiumAdjustmentPct ?? 0) >= 0 ? "+" : ""}
+                  {item.underwriting?.premiumAdjustmentPct ?? 0}% ·{" "}
+                  {item.underwriting?.inspectionPriority ?? "routine"}
+                </p>
               </td>
               <td className="px-4 py-3">{item.confidenceScore}</td>
               <td className="px-4 py-3">{item.freshnessScore}</td>

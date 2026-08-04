@@ -101,6 +101,8 @@ The original app stores high-value marker semantics in Firestore (`quality`, `pr
 - Transformation pipeline in `src/lib/legacy-migration.ts`
 - Preview ingestion endpoint: `POST /api/v1/import/legacy-markers`
 - Operator UI for upload and preview: `/migration`
+- Tenant persistence layer with import history and trend endpoints
+- Customer analytics console: `/customers`
 
 ### Why daily full mapping is not required
 - Risk and confidence are decay-weighted over time.

@@ -23,6 +23,8 @@ Options:
   --threshold <0-1>               Detection threshold (default: 0.72)
   --emit-uncertain                Emit low-confidence candidates when imagery exists
   --uncertain-score <0-1>         Base confidence for uncertain candidates (default: 0.42)
+  --hard-surveillance             Require fixed-mounted CCTV evidence (higher precision)
+  --hard-threshold <0-1>          Hard mode minimum score (default: 0.67)
   --label <name>                  Batch label in output metadata
   --plan-only                     Print batch assignment plan only and exit
 
@@ -211,9 +213,59 @@ const CAMERA_TERMS = [
   "dome camera",
 ];
 
+const NON_INFRA_CAMERA_TERMS = [
+  "action camera",
+  "camera lens",
+  "photography",
+  "photographer",
+  "selfie",
+  "360 camera",
+  "virtual reality",
+];
+
 function hasCameraTerm(text) {
   const normalized = String(text ?? "").toLowerCase();
   return CAMERA_TERMS.some((term) => normalized.includes(term));
+}
+
+function hasNonInfraCameraTerm(text) {
+  const normalized = String(text ?? "").toLowerCase();
+  return NON_INFRA_CAMERA_TERMS.some((term) => normalized.includes(term));
+}
+
+function objectGeometry(annotation) {
+  const vertices = Array.isArray(annotation?.boundingPoly?.normalizedVertices)
+    ? annotation.boundingPoly.normalizedVertices
+    : [];
+  if (vertices.length === 0) {
+    return { area: 0, centerY: 0.5 };
+  }
+  const xs = vertices.map((point) => Number(point.x ?? 0));
+  const ys = vertices.map((point) => Number(point.y ?? 0));
+  const minX = Math.min(...xs);
+  const maxX = Math.max(...xs);
+  const minY = Math.min(...ys);
+  const maxY = Math.max(...ys);
+  const width = Math.max(0, maxX - minX);
+  const height = Math.max(0, maxY - minY);
+  return {
+    area: width * height,
+    centerY: minY + height / 2,
+  };
+}
+
+function fixedMountHeuristic(hit) {
+  let score = 0;
+  if (hit.centerY < 0.72) {
+    score += 0.34;
+  }
+  if (hit.area > 0.0002 && hit.area < 0.09) {
+    score += 0.34;
+  } else if (hit.area > 0 && hit.area < 0.2) {
+    score += 0.18;
+  }
+  score += Number(hit.score ?? 0) * 0.32;
+  return clamp(score, 0, 1);
 }
 
 function topHits(items, max = 4) {
@@ -280,8 +332,25 @@ async function detectCameraEvidence(streetViewUrl, visionApiKey) {
       : [];
 
     const labelHits = labels.filter((item) => hasCameraTerm(item.description));
-    const objectHits = objects.filter((item) => hasCameraTerm(item.name));
+    const objectHits = objects
+      .filter((item) => hasCameraTerm(item.name))
+      .map((item) => {
+        const geometry = objectGeometry(item);
+        const hit = {
+          name: String(item.name ?? ""),
+          score: Number(item.score ?? 0),
+          area: geometry.area,
+          centerY: geometry.centerY,
+        };
+        return {
+          ...hit,
+          mountHeuristic: fixedMountHeuristic(hit),
+        };
+      });
     const webHits = webEntities.filter((item) => hasCameraTerm(item.description));
+    const negativeSignals =
+      labels.filter((item) => hasNonInfraCameraTerm(item.description)).length +
+      webEntities.filter((item) => hasNonInfraCameraTerm(item.description)).length;
 
     const labelScore = labelHits.reduce(
       (best, item) => Math.max(best, Number(item.score ?? 0)),
@@ -296,8 +365,9 @@ async function detectCameraEvidence(streetViewUrl, visionApiKey) {
       0,
     );
 
+    const infraObjectHits = objectHits.filter((item) => item.mountHeuristic >= 0.5);
     const sourceMatches = [
-      objectHits.length > 0 ? "object" : null,
+      infraObjectHits.length > 0 ? "object" : null,
       labelHits.length > 0 ? "label" : null,
       webHits.length > 0 ? "web" : null,
     ].filter((item) => Boolean(item));
@@ -309,6 +379,8 @@ async function detectCameraEvidence(streetViewUrl, visionApiKey) {
         labelHits: [],
         objectHits: [],
         webHits: [],
+        negativeSignals,
+        hardPass: false,
       };
     }
 
@@ -317,13 +389,32 @@ async function detectCameraEvidence(streetViewUrl, visionApiKey) {
       labelScore * 0.27 +
       webScore * 0.15 +
       (sourceMatches.length >= 2 ? 0.08 : 0);
+    const penalty = Math.min(0.24, negativeSignals * 0.06);
+    const strongObject = infraObjectHits.some(
+      (item) => Number(item.score) >= 0.55 && Number(item.mountHeuristic) >= 0.62,
+    );
+    const hardPass =
+      strongObject &&
+      sourceMatches.length >= 2 &&
+      negativeSignals === 0 &&
+      weighted - penalty >= 0.6;
 
     return {
-      score: clamp(weighted, 0, 0.99),
+      score: clamp(weighted - penalty, 0, 0.99),
       sourceMatches,
       labelHits: topHits(labelHits),
-      objectHits: topHits(objectHits),
+      objectHits: topHits(infraObjectHits).map((item) => {
+        const source = infraObjectHits.find((hit) => hit.name === item.description);
+        return {
+          ...item,
+          area: Number(source?.area ?? 0),
+          centerY: Number(source?.centerY ?? 0),
+          mountHeuristic: Number(source?.mountHeuristic ?? 0),
+        };
+      }),
       webHits: topHits(webHits),
+      negativeSignals,
+      hardPass,
     };
   } catch {
     return null;
@@ -384,6 +475,8 @@ function markerFromObservation(detection, mode) {
         model: "google-vision-label-object-web-v2",
         score: Number(detection.score ?? 0),
         threshold: Number(detection.threshold ?? 0),
+        hardPass: Boolean(detection.evidence?.hardPass),
+        negativeSignals: Number(detection.evidence?.negativeSignals ?? 0),
         sourceMatches: detection.evidence?.sourceMatches ?? [],
         objectHits: detection.evidence?.objectHits ?? [],
         labelHits: detection.evidence?.labelHits ?? [],
@@ -470,6 +563,8 @@ async function main() {
   const threshold = clamp(Number(args.threshold ?? 0.72), 0.35, 0.98);
   const emitUncertain = Boolean(args["emit-uncertain"]);
   const uncertainScore = clamp(Number(args["uncertain-score"] ?? 0.42), 0.2, 0.7);
+  const hardSurveillance = Boolean(args["hard-surveillance"]);
+  const hardThreshold = clamp(Number(args["hard-threshold"] ?? 0.67), 0.45, 0.95);
   const maxAssets = Math.max(Number(args["max-assets"] ?? 250), 1);
   const label =
     String(args.label ?? `batch-${batchIndex}-of-${batchCount}`).replace(
@@ -493,6 +588,7 @@ async function main() {
   let imagesAnalyzed = 0;
   let visionErrors = 0;
   let uncertainMarkersGenerated = 0;
+  let uncertainSuppressedNoEvidence = 0;
 
   for (const asset of selectedAssets) {
     let hasImagery = false;
@@ -530,8 +626,17 @@ async function main() {
         visionErrors += 1;
       }
       const score = evidence?.score ?? 0;
-      if (score === null || score < threshold) {
-        if (emitUncertain) {
+      const effectiveThreshold = hardSurveillance
+        ? Math.max(threshold, hardThreshold)
+        : threshold;
+      const hardPass = Boolean(evidence?.hardPass);
+      const hasEvidenceSignal = Boolean(
+        evidence && Array.isArray(evidence.sourceMatches) && evidence.sourceMatches.length > 0,
+      );
+      const qualifiesHard = !hardSurveillance || hardPass;
+      if (score < effectiveThreshold || !qualifiesHard) {
+        const hardNearMiss = !hardSurveillance || (hardPass && score >= hardThreshold * 0.78);
+        if (emitUncertain && hasEvidenceSignal && hardNearMiss) {
           markers.push(
             markerFromObservation(
               {
@@ -551,6 +656,8 @@ async function main() {
             ),
           );
           uncertainMarkersGenerated += 1;
+        } else if (emitUncertain && !hasEvidenceSignal) {
+          uncertainSuppressedNoEvidence += 1;
         }
         continue;
       }
@@ -585,6 +692,16 @@ async function main() {
   if (markers.length === 0) {
     warnings.push("No markers reached threshold. Lower --threshold or increase --radius-meters.");
   }
+  if (hardSurveillance) {
+    warnings.push(
+      "Hard surveillance mode enabled: requires fixed-mounted CCTV evidence and suppresses weaker signals.",
+    );
+  }
+  if (uncertainSuppressedNoEvidence > 0) {
+    warnings.push(
+      `${uncertainSuppressedNoEvidence} uncertain candidates were suppressed due to no camera evidence.`,
+    );
+  }
   if (visionErrors > 0) {
     warnings.push(
       `Vision scored ${visionErrors} images as unavailable/error; run surveillance:doctor to inspect key/API access.`,
@@ -606,6 +723,8 @@ async function main() {
       threshold,
       emitUncertain,
       uncertainScore,
+      hardSurveillance,
+      hardThreshold,
     },
     diagnostics: {
       assetsRequested: assets.length,
@@ -615,6 +734,7 @@ async function main() {
       imagesAnalyzed,
       visionErrors,
       uncertainMarkersGenerated,
+      uncertainSuppressedNoEvidence,
       markersGenerated: markers.length,
     },
     selectedAssetIds: selectedAssets.map((asset) => asset.id),

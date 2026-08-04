@@ -79,6 +79,22 @@ GOOGLE_API_KEY=... npm run surveillance:agent -- \
   --out ./surveillance-batch-2.json
 ```
 
+For higher precision "hard surveillance mapping" (fixed-mounted CCTV bias):
+
+```bash
+GOOGLE_API_KEY=... npm run surveillance:agent -- \
+  --assets ./assets.csv \
+  --batch-count 6 \
+  --batch-index 2 \
+  --radius-meters 350 \
+  --threshold 0.62 \
+  --hard-surveillance \
+  --hard-threshold 0.67 \
+  --emit-uncertain \
+  --uncertain-score 0.36 \
+  --out ./surveillance-batch-2.json
+```
+
 If you use one shared key, this is also valid:
 
 ```bash

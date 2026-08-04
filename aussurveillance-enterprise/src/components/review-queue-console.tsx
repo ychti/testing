@@ -80,17 +80,20 @@ function extractMarkers(payload: unknown): LegacyMarkerShape[] {
 
 export function ReviewQueueConsole() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const decisionSyncChainRef = useRef<Promise<void>>(Promise.resolve());
   const [tenants, setTenants] = useState<TenantRecord[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
   const [status, setStatus] = useState("Loading review queue...");
   const [uploadLabel, setUploadLabel] = useState("No file selected yet.");
   const [previewBrokenCandidateId, setPreviewBrokenCandidateId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [decisionSyncing, setDecisionSyncing] = useState(0);
   const [reviewerNote, setReviewerNote] = useState("");
   const [sourceLabel, setSourceLabel] = useState("google-surveillance-batch");
   const [verifiedLat, setVerifiedLat] = useState("");
   const [verifiedLng, setVerifiedLng] = useState("");
   const [candidate, setCandidate] = useState<ReviewCandidate | null>(null);
+  const [pendingCandidates, setPendingCandidates] = useState<ReviewCandidate[]>([]);
   const [stats, setStats] = useState<QueueStats>({
     pending: 0,
     approved: 0,
@@ -125,27 +128,33 @@ export function ReviewQueueConsole() {
     return initial;
   }
 
-  async function loadNextCandidate(tenantId: string) {
+  function applyActiveCandidate(nextCandidate: ReviewCandidate | null) {
+    setCandidate(nextCandidate);
+    setPreviewBrokenCandidateId(null);
+    setVerifiedLat(nextCandidate ? String(nextCandidate.marker.lat ?? "") : "");
+    setVerifiedLng(nextCandidate ? String(nextCandidate.marker.lng ?? "") : "");
+  }
+
+  async function loadPendingCandidates(tenantId: string, limit = 200) {
     if (!tenantId) {
-      setCandidate(null);
+      setPendingCandidates([]);
+      applyActiveCandidate(null);
       return;
     }
     const response = await fetch(
-      `/api/v1/review-candidates/next?tenantId=${encodeURIComponent(tenantId)}`,
+      `/api/v1/review-candidates?tenantId=${encodeURIComponent(
+        tenantId,
+      )}&status=pending&limit=${encodeURIComponent(String(limit))}`,
     );
     const payload = (await response.json()) as
-      | { candidate: ReviewCandidate | null; stats: QueueStats; error?: string }
+      | { candidates: ReviewCandidate[]; stats: QueueStats; error?: string }
       | { error: string };
-    if (!response.ok || !("candidate" in payload)) {
+    if (!response.ok || !("candidates" in payload)) {
       throw new Error(("error" in payload && payload.error) || "Queue fetch failed.");
     }
-    setCandidate(payload.candidate);
-    setVerifiedLat(
-      payload.candidate ? String(payload.candidate.marker.lat ?? "") : "",
-    );
-    setVerifiedLng(
-      payload.candidate ? String(payload.candidate.marker.lng ?? "") : "",
-    );
+    const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+    setPendingCandidates(candidates);
+    applyActiveCandidate(candidates[0] ?? null);
     setStats(payload.stats);
   }
 
@@ -164,7 +173,7 @@ export function ReviewQueueConsole() {
             setCandidate(null);
             return;
           }
-          await loadNextCandidate(initialTenantId);
+          await loadPendingCandidates(initialTenantId);
           if (cancelled) {
             return;
           }
@@ -187,6 +196,8 @@ export function ReviewQueueConsole() {
       cancelled = true;
       window.clearTimeout(timer);
     };
+    // loadPendingCandidates is intentionally omitted to prevent effect churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -197,7 +208,7 @@ export function ReviewQueueConsole() {
       window.localStorage.setItem("aus-intel-tenant-id", selectedTenantId);
     }
     const timer = window.setTimeout(() => {
-      void loadNextCandidate(selectedTenantId).catch((error: unknown) => {
+      void loadPendingCandidates(selectedTenantId).catch((error: unknown) => {
         setStatus(
           error instanceof Error ? error.message : "Failed to refresh queue.",
         );
@@ -206,6 +217,8 @@ export function ReviewQueueConsole() {
     return () => {
       window.clearTimeout(timer);
     };
+    // loadPendingCandidates is intentionally omitted to prevent effect churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTenantId]);
 
   async function handleUploadFile(file: File) {
@@ -246,7 +259,7 @@ export function ReviewQueueConsole() {
         return;
       }
       setStats(body.stats);
-      await loadNextCandidate(fallbackTenantId);
+      await loadPendingCandidates(fallbackTenantId);
       setStatus(
         `Queued ${body.createdCount} candidates from ${file.name} (${body.skippedCount} duplicates skipped).`,
       );
@@ -259,48 +272,72 @@ export function ReviewQueueConsole() {
     }
   }
 
-  async function handleDecision(decision: "approve" | "reject") {
+  function enqueueDecisionSync(task: () => Promise<void>) {
+    setDecisionSyncing((current) => current + 1);
+    decisionSyncChainRef.current = decisionSyncChainRef.current
+      .then(task)
+      .catch(async (error) => {
+        setStatus(
+          error instanceof Error
+            ? `Decision sync failed: ${error.message}. Reloading queue...`
+            : "Decision sync failed. Reloading queue...",
+        );
+        if (selectedTenantId) {
+          await loadPendingCandidates(selectedTenantId);
+        }
+      })
+      .finally(() => {
+        setDecisionSyncing((current) => Math.max(current - 1, 0));
+      });
+  }
+
+  function handleDecision(decision: "approve" | "reject") {
     if (!selectedTenantId || !candidate) {
       return;
     }
-    setLoading(true);
-    try {
-      const parsedLat = Number(verifiedLat);
-      const parsedLng = Number(verifiedLng);
+
+    const activeCandidate = candidate;
+    const parsedLat = Number(verifiedLat);
+    const parsedLng = Number(verifiedLng);
+    const payload = {
+      tenantId: selectedTenantId,
+      candidateId: activeCandidate.id,
+      decision,
+      reviewerNote: reviewerNote.trim() || undefined,
+      verifiedLat: Number.isFinite(parsedLat) ? parsedLat : undefined,
+      verifiedLng: Number.isFinite(parsedLng) ? parsedLng : undefined,
+    };
+
+    const nextQueue = pendingCandidates.slice(1);
+    setPendingCandidates(nextQueue);
+    applyActiveCandidate(nextQueue[0] ?? null);
+    setReviewerNote("");
+    setStats((current) => ({
+      ...current,
+      pending: Math.max(current.pending - 1, 0),
+      approved: current.approved + (decision === "approve" ? 1 : 0),
+      rejected: current.rejected + (decision === "reject" ? 1 : 0),
+    }));
+    setStatus(
+      decision === "approve"
+        ? "Approved instantly. Syncing..."
+        : "Rejected instantly. Syncing...",
+    );
+
+    enqueueDecisionSync(async () => {
       const response = await fetch("/api/v1/review-candidates", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          tenantId: selectedTenantId,
-          candidateId: candidate.id,
-          decision,
-          reviewerNote: reviewerNote.trim() || undefined,
-          verifiedLat: Number.isFinite(parsedLat) ? parsedLat : undefined,
-          verifiedLng: Number.isFinite(parsedLng) ? parsedLng : undefined,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = (await response.json()) as
         | { stats: QueueStats; error?: string }
         | { error: string };
       if (!response.ok || !("stats" in body)) {
-        setStatus(("error" in body && body.error) || "Failed to save decision.");
-        return;
+        throw new Error(("error" in body && body.error) || "Failed to sync decision.");
       }
       setStats(body.stats);
-      setReviewerNote("");
-      await loadNextCandidate(selectedTenantId);
-      setStatus(
-        decision === "approve"
-          ? "Marked as verified CCTV."
-          : "Rejected and moved to non-CCTV set.",
-      );
-    } catch (error) {
-      setStatus(
-        error instanceof Error ? error.message : "Failed to update candidate.",
-      );
-    } finally {
-      setLoading(false);
-    }
+    });
   }
 
   async function downloadApprovedJson() {
@@ -358,7 +395,7 @@ export function ReviewQueueConsole() {
         setStatus(("error" in body && body.error) || "Failed to import approved markers.");
         return;
       }
-      await loadNextCandidate(selectedTenantId);
+      await loadPendingCandidates(selectedTenantId);
       setStatus(
         `Imported ${body.importedMarkers} approved markers (run ${body.runId}, ${body.summary.totalSites} sites).`,
       );
@@ -722,7 +759,10 @@ export function ReviewQueueConsole() {
         </button>
       </div>
 
-      <p className="text-sm text-slate-400">{status}</p>
+      <p className="text-sm text-slate-400">
+        {status}
+        {decisionSyncing > 0 ? ` (${decisionSyncing} decision sync pending)` : ""}
+      </p>
     </section>
   );
 }

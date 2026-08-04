@@ -142,6 +142,19 @@ GOOGLE_API_KEY=... npm run surveillance:agent -- \
   --uncertain-score 0.42 \
   --out ./surveillance-batch-2.json
 
+# Platinum/hard mode: prioritize fixed surveillance infrastructure evidence
+GOOGLE_API_KEY=... npm run surveillance:agent -- \
+  --assets ./assets.csv \
+  --batch-count 6 \
+  --batch-index 2 \
+  --radius-meters 350 \
+  --threshold 0.62 \
+  --hard-surveillance \
+  --hard-threshold 0.67 \
+  --emit-uncertain \
+  --uncertain-score 0.36 \
+  --out ./surveillance-batch-2.json
+
 # Merge all worker outputs into one import file
 npm run surveillance:merge -- --out ./surveillance-merged.json ./surveillance-batch-*.json
 ```
